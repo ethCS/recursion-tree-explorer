@@ -1,0 +1,90 @@
+# Auto-deploy: on every push to main, test and build the explorer, mirror the
+# build into the site repo's public/projects/dsa/live/, and push the site. The
+# site's own host redeploys on that push. See AGENTS.md → "Deploy pipeline".
+#
+# Security notes (this repo is public):
+# - The only secret is SITE_DEPLOY_KEY, an SSH deploy key with write access to
+#   the site repo only. It is never printed.
+# - There is deliberately no pull_request / pull_request_target trigger, so
+#   code from forks can never run with the secret.
+# - Third-party actions are pinned to full commit SHAs.
+name: Deploy to eethan.com
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'scripts/qa.mjs'
+      - 'scripts/shot.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-site
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.repository == 'ethCS/recursion-tree-explorer'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out explorer
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: explorer
+
+      - name: Check out site
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ethCS/my_website
+          ssh-key: ${{ secrets.SITE_DEPLOY_KEY }}
+          path: site
+          fetch-depth: 1
+
+      - name: Set up Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: explorer/package-lock.json
+
+      - name: Install
+        working-directory: explorer
+        run: npm ci
+
+      - name: Test, build and copy into the site
+        working-directory: explorer
+        env:
+          SITE_DIR: ${{ github.workspace }}/site
+        run: bash scripts/sync-to-site.sh
+
+      - name: Commit and push the site
+        working-directory: site
+        env:
+          SHA: ${{ github.sha }}
+          MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          git add -A public/projects/dsa/live
+          if git diff --cached --quiet; then
+            echo "Build output unchanged; nothing to deploy."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898283+github-actions[bot]@users.noreply.github.com"
+          subject="$(printf '%s' "${MESSAGE:-manual run}" | head -n1)"
+          git commit -q -m "Update Recursion Tree Explorer: ${subject}" \
+                     -m "From ethCS/recursion-tree-explorer@${SHA}"
+          # Retry if the site's main moved while we built (we only touch our folder).
+          for attempt in 1 2 3; do
+            if git push origin HEAD:main; then
+              echo "Pushed $(git rev-parse --short HEAD) to the site's main."
+              exit 0
+            fi
+            echo "Push rejected (attempt ${attempt}); rebasing onto the latest main."
+            git pull --rebase origin main
+          done
+          exit 1

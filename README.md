@@ -48,16 +48,19 @@ cd dist && python3 -m http.server 8080   # open http://localhost:8080/projects/d
 
 ## Deploying to eethan.com/projects/dsa/live
 
-The live copy is served by the author's site at https://eethan.com/projects/dsa/live/. The built files are committed to the site's repo, which is private, and the site serves them as static files. Deploying is a two-repo job:
+The live copy is served by the author's site at https://eethan.com/projects/dsa/live/. The built files are committed to the site's repo, which is private, and the site serves them as static files.
 
-1. **Edit and preview here.** `npm run dev` serves the app at http://localhost:5173/ and reloads on save. `npm run test:watch` re-runs the tests as you work.
-2. **Commit and push here.**
-3. **Copy the build into the site:** run `npm run sync:site`. It runs the tests, builds for `/projects/dsa/live/`, and replaces `public/projects/dsa/live/` in the site checkout with the new build. It commits nothing. It stops before copying if a test fails or the build doesn't reference `/projects/dsa/live/assets/`.
-4. **Commit and push that folder in the site repo.** Pushing the site deploys it. The site's README covers the rest.
+**Deploys are automatic.** Push to `main` here, and [`.github/workflows/deploy-site.yml`](.github/workflows/deploy-site.yml) runs the tests, builds the app, copies the build into the site repo and pushes it. The site's host then redeploys. The change is live a few minutes after your push.
 
-`npm run build && npm run preview` serves the production build at http://localhost:4173/projects/dsa/live/, if you want to check it before syncing.
+1. **Edit and preview:** `npm run dev` serves the app at http://localhost:5173/ and reloads on save. `npm run test:watch` re-runs the tests as you work.
+2. **Commit and push to `main`.** That's the whole deploy.
+3. **Watch it (optional):** `gh run watch`, or open the Actions tab. If the tests fail, nothing is deployed.
 
-`scripts/sync-to-site.sh` finds the site checkout through `SITE_DIR`, which has a default in the script. It refuses to run if that folder isn't a clone of the site repo, and it only ever writes inside `public/projects/dsa/live/`.
+Pushes that only change Markdown files or the QA scripts don't deploy. To redeploy by hand, use **Actions → Deploy to eethan.com → Run workflow**, or run `gh workflow run deploy-site.yml`.
+
+`npm run build && npm run preview` serves the production build at http://localhost:4173/projects/dsa/live/, if you want to check it before pushing.
+
+**Manual fallback.** If CI is unavailable, `npm run sync:site` does the same test, build and copy into a local checkout of the site (found through `SITE_DIR`, which has a default in the script). Then commit and push `public/projects/dsa/live/` in the site repo yourself. The script refuses to run if that folder isn't a clone of the site repo, and it only ever writes inside `public/projects/dsa/live/`.
 
 Navigation state lives only in the URL hash (for example `#2T4+1T2+n1`), so no SPA fallback is needed.
 
