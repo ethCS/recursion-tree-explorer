@@ -16,6 +16,9 @@ import { decodeHash, encodeHash } from './state/url';
 import { useLocalSetting, useReducedMotion, useTheme } from './state/prefs';
 
 const SYMBOLIC_LEVELS = 5;
+// The project's page on the portfolio site, which links here. Override with
+// VITE_PORTFOLIO_URL when hosting the explorer somewhere else.
+const PORTFOLIO_URL = import.meta.env.VITE_PORTFOLIO_URL || 'https://eethan.com/projects/dsa';
 const DEFAULT: Recurrence = PRESETS[3].rec;
 
 export default function App() {
@@ -97,6 +100,12 @@ export default function App() {
       <div className={`app ${selected ? 'has-explain' : ''}`}>
         <header className="topbar">
           <div className="brand">
+            <a className="back-link" href={PORTFOLIO_URL} title="Back to the portfolio" aria-label="Back to the portfolio">
+              <svg viewBox="0 0 16 16" aria-hidden>
+                <path d="M10 3.5 5.5 8l4.5 4.5" />
+              </svg>
+              <span className="back-label">Portfolio</span>
+            </a>
             <Logo />
             <div>
               <div className="brand-name">Recursion Tree Explorer</div>

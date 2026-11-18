@@ -361,6 +361,39 @@ h3 {
   gap: 12px;
   min-width: 0;
 }
+.back-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  height: 34px;
+  padding: 0 11px 0 8px;
+  border-radius: 9px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background 150ms, color 150ms;
+}
+.back-link:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.back-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.back-link svg {
+  width: 16px;
+  height: 16px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .logo {
   width: 30px;
   height: 30px;
@@ -1928,6 +1961,14 @@ svg .hl-peek {
     gap: 10px;
     width: 100%;
     justify-content: space-between;
+  }
+  .back-link {
+    width: 34px;
+    padding: 0;
+    justify-content: center;
+  }
+  .back-label {
+    display: none;
   }
   .theme-btn {
     position: absolute;

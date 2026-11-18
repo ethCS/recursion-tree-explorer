@@ -62,6 +62,8 @@ Pushes that only change Markdown files or the QA scripts don't deploy. To redepl
 
 **Manual fallback.** If CI is unavailable, `npm run sync:site` does the same test, build and copy into a local checkout of the site (found through `SITE_DIR`, which has a default in the script). Then commit and push `public/projects/dsa/live/` in the site repo yourself. The script refuses to run if that folder isn't a clone of the site repo, and it only ever writes inside `public/projects/dsa/live/`.
 
+The header's **Portfolio** back link goes to the project's page on the site, `https://eethan.com/projects/dsa`. To host the explorer somewhere else, set `VITE_PORTFOLIO_URL` at build time to point it elsewhere.
+
 Navigation state lives only in the URL hash (for example `#2T4+1T2+n1`), so no SPA fallback is needed.
 
 ## Project layout
