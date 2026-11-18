@@ -7,7 +7,6 @@ import { Intro } from './components/Intro';
 import { LevelPanel } from './components/LevelPanel';
 import { TreeView } from './components/TreeView';
 import { PredictCard, RStrip, type PredictState } from './components/Verdict';
-import { recurrenceText } from './math/format';
 import { PRESETS, randomRecurrence } from './math/random';
 import { analyze, boundValue, concreteLevels, LIMITS, normalize, type Field, type Recurrence } from './math/recurrence';
 import type { Entity } from './state/entities';
@@ -48,7 +47,6 @@ export default function App() {
   useEffect(() => {
     const h = encodeHash(rec);
     if (window.location.hash !== h) history.replaceState(null, '', h);
-    document.title = `${recurrenceText(rec.terms, rec.d)} · Recursion Tree Explorer`;
   }, [rec]);
 
   useEffect(() => {
