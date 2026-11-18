@@ -52,7 +52,13 @@ gh run watch                                          # follow the latest run
 curl -sI https://eethan.com/projects/dsa/live/ | head -1   # expect 200
 ```
 
-The run log's last step prints the site commit it pushed. The new asset hash appears in `curl -s https://eethan.com/projects/dsa/live/ | grep -o 'index-[^"]*\.js'`.
+The run log's last step prints the site commit it pushed. Every CI build stamps the explorer commit it was built from into the page. Check what is live with:
+
+```sh
+curl -s https://eethan.com/projects/dsa/live/ | grep -o 'rte-build" content="[^"]*'   # should equal: git rev-parse HEAD
+```
+
+`local` means the live copy came from a manual `npm run sync:site`.
 
 ### If the workflow fails
 

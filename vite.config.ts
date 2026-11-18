@@ -11,9 +11,19 @@ export default defineConfig(({ command }) => {
   // Mirror the base path inside dist/ so a static host serving dist/ as its
   // root finds index.html at /projects/dsa/live/index.html.
   const outDir = 'dist' + (base === '/' ? '' : base.replace(/\/$/, ''));
+  // Stamp the source commit into the page so a deploy can be verified with
+  // `curl -s https://eethan.com/projects/dsa/live/ | grep rte-build`.
+  // CI sets GITHUB_SHA; local builds say "local".
+  const build = (process.env.GITHUB_SHA ?? 'local').slice(0, 40);
   return {
     base,
-    plugins: [react()],
+    plugins: [
+      react(),
+      {
+        name: 'build-stamp',
+        transformIndexHtml: () => [{ tag: 'meta', attrs: { name: 'rte-build', content: build }, injectTo: 'head' }],
+      },
+    ],
     // One page that needs KaTeX + React on first paint: splitting would not
     // reduce what loads, so allow the ~555 kB (~171 kB gzip) bundle.
     build: { outDir, emptyOutDir: true, chunkSizeWarningLimit: 700 },
