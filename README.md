@@ -48,18 +48,16 @@ cd dist && python3 -m http.server 8080   # open http://localhost:8080/projects/d
 
 ## Deploying to eethan.com/projects/dsa/live
 
-The explorer is served by the main site (the `ethCS/my_website` repo, a Next.js app deployed to Cloudflare Workers on push). On that site `/projects/dsa` is the project's tile page, and its "View live" button links here.
+The live copy is served by the author's site at https://eethan.com/projects/dsa/live/. The built files are committed to the site's repo, which is private, and the site serves them as static files. Deploying is a two-repo job:
 
-The built files are committed to the site at `public/projects/dsa/live/`. Cloudflare serves them as static assets before the Next.js worker runs, and redirects `/projects/dsa/live` to `/projects/dsa/live/`. The site's `next.config.ts` rewrites the same URLs to `index.html` for `next dev` / `next start`, and its middleware skips this path so the site's nonce-based CSP doesn't block the explorer's scripts.
+1. **Edit and preview here.** `npm run dev` serves the app at http://localhost:5173/ and reloads on save. `npm run test:watch` re-runs the tests as you work.
+2. **Commit and push here.**
+3. **Copy the build into the site:** run `npm run sync:site`. It runs the tests, builds for `/projects/dsa/live/`, and replaces `public/projects/dsa/live/` in the site checkout with the new build. It commits nothing. It stops before copying if a test fails or the build doesn't reference `/projects/dsa/live/assets/`.
+4. **Commit and push that folder in the site repo.** Pushing the site deploys it. The site's README covers the rest.
 
-To publish a change:
+`npm run build && npm run preview` serves the production build at http://localhost:4173/projects/dsa/live/, if you want to check it before syncing.
 
-```sh
-npm run sync:site                 # test, build, then mirror dist/projects/dsa/live/ into the site
-cd ../../../my_website && git add public/projects/dsa/live && git commit -m "Update Recursion Tree Explorer"
-```
-
-`scripts/sync-to-site.sh` looks for the site at `~/Documents/my_website`. Set `SITE_DIR=/path/to/my_website` to use another checkout. It refuses to run if that folder isn't the my_website repo, and it only ever writes inside `public/projects/dsa/live/`.
+`scripts/sync-to-site.sh` finds the site checkout through `SITE_DIR`, which has a default in the script. It refuses to run if that folder isn't a clone of the site repo, and it only ever writes inside `public/projects/dsa/live/`.
 
 Navigation state lives only in the URL hash (for example `#2T4+1T2+n1`), so no SPA fallback is needed.
 
