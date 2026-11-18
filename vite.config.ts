@@ -2,13 +2,14 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// Production builds are served from eethan.com/projects/dsa/, so the default
-// build base is that sub-path. `npm run dev` serves from the root. Override
+// Production builds are served from eethan.com/projects/dsa/live/ (the site's
+// own /projects/dsa page is the project tile), so the default build base is
+// that sub-path. `npm run dev` serves from the root. Override
 // either with BASE_PATH (e.g. BASE_PATH=/ npm run build).
 export default defineConfig(({ command }) => {
-  const base = process.env.BASE_PATH ?? (command === 'build' ? '/projects/dsa/' : '/');
+  const base = process.env.BASE_PATH ?? (command === 'build' ? '/projects/dsa/live/' : '/');
   // Mirror the base path inside dist/ so a static host serving dist/ as its
-  // root finds index.html at /projects/dsa/index.html.
+  // root finds index.html at /projects/dsa/live/index.html.
   const outDir = 'dist' + (base === '/' ? '' : base.replace(/\/$/, ''));
   return {
     base,

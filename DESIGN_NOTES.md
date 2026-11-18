@@ -162,7 +162,7 @@ Helpers live in `words.ts`. A few examples:
 ## Verification done
 
 - `npm test`: 46/46 passing (34 maths, 12 explanation suites). `tsc --noEmit`: clean. `npm run build`: clean.
-- Ran the production build from a plain static server at `/projects/dsa/`. Ran `build:root` and checked that its asset paths start at `/`.
+- Ran the production build from a plain static server at `/projects/dsa/live/`. Ran `build:root` and checked that its asset paths start at `/`.
 - Drove headless Chrome with `scripts/qa.mjs` and checked every result by hand:
   - **The four presets:** merge sort O(n log n), binary search O(log n), Karatsuba O(n^1.585), and the course example O(n log n).
   - **24 randomized recurrences** across two runs. For example, the multi-term p values satisfy Σ aᵢ/bᵢ^p ≈ 1.

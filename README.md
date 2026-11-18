@@ -34,40 +34,34 @@ npm run dev          # http://localhost:5173/  (served at the root in dev)
 | `npm run dev`        | Dev server at `/`                                                     |
 | `npm test`           | Vitest: maths module, plus every explanation rendered through KaTeX   |
 | `npm run typecheck`  | `tsc -b`                                                              |
-| `npm run build`      | Type-check, then build for `/projects/dsa/` into `dist/projects/dsa/` |
+| `npm run build`      | Type-check, then build for `/projects/dsa/live/` into `dist/projects/dsa/live/` |
 | `npm run build:root` | Same, but for serving at `/` (output in `dist/`)                      |
 | `npm run preview`    | Serve the last build locally                                          |
+| `npm run sync:site`  | Rebuild and copy the build into the eethan.com repo (see below)       |
 
-The base path comes from the `BASE_PATH` environment variable. If it isn't set, it is `/projects/dsa/` for builds and `/` for dev, so `BASE_PATH=/some/where/ npm run build` works for any other sub-path. The build mirrors the base path inside `dist/`, which means any static server that treats `dist/` as its root serves the app at the right URL:
+The base path comes from the `BASE_PATH` environment variable. If it isn't set, it is `/projects/dsa/live/` for builds and `/` for dev, so `BASE_PATH=/some/where/ npm run build` works for any other sub-path. The build mirrors the base path inside `dist/`, which means any static server that treats `dist/` as its root serves the app at the right URL:
 
 ```sh
 npm run build
-cd dist && python3 -m http.server 8080   # open http://localhost:8080/projects/dsa/
+cd dist && python3 -m http.server 8080   # open http://localhost:8080/projects/dsa/live/
 ```
 
-## Deploying to eethan.com/projects/dsa
+## Deploying to eethan.com/projects/dsa/live
 
-`vercel.json` is already set up: Vite build, `outputDirectory: dist`, a redirect from `/` and `/projects/dsa` to `/projects/dsa/`, and long-lived caching for the hashed assets.
+The explorer is served by the main site (the `ethCS/my_website` repo, a Next.js app deployed to Cloudflare Workers on push). On that site `/projects/dsa` is the project's tile page, and its "View live" button links here.
 
-**Option A: separate Vercel project plus a rewrite (recommended).**
+The built files are committed to the site at `public/projects/dsa/live/`. Cloudflare serves them as static assets before the Next.js worker runs, and redirects `/projects/dsa/live` to `/projects/dsa/live/`. The site's `next.config.ts` rewrites the same URLs to `index.html` for `next dev` / `next start`, and its middleware skips this path so the site's nonce-based CSP doesn't block the explorer's scripts.
 
-1. Import this folder as its own Vercel project. No settings need changing; `vercel.json` covers them. It will serve at `https://<project>.vercel.app/projects/dsa/`.
-2. In the main eethan.com project, add a rewrite to its `vercel.json`:
+To publish a change:
 
-   ```json
-   {
-     "rewrites": [
-       { "source": "/projects/dsa", "destination": "https://<project>.vercel.app/projects/dsa/" },
-       { "source": "/projects/dsa/:path*", "destination": "https://<project>.vercel.app/projects/dsa/:path*" }
-     ]
-   }
-   ```
+```sh
+npm run sync:site                 # test, build, then mirror dist/projects/dsa/live/ into the site
+cd ../../../my_website && git add public/projects/dsa/live && git commit -m "Update Recursion Tree Explorer"
+```
 
-   Every asset URL in the build already starts with `/projects/dsa/`, so no path rewriting is needed.
+`scripts/sync-to-site.sh` looks for the site at `~/Documents/my_website`. Set `SITE_DIR=/path/to/my_website` to use another checkout. It refuses to run if that folder isn't the my_website repo, and it only ever writes inside `public/projects/dsa/live/`.
 
-**Option B: copy into the main site.** Run `npm run build` and copy `dist/projects/dsa/` into the main site's static output at `projects/dsa/`.
-
-Navigation state lives only in the URL hash (for example `#2T4+1T2+n1`), so neither option needs SPA fallbacks.
+Navigation state lives only in the URL hash (for example `#2T4+1T2+n1`), so no SPA fallback is needed.
 
 ## Project layout
 

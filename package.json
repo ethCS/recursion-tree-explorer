@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "sync:site": "bash scripts/sync-to-site.sh"
   },
   "dependencies": {
     "katex": "^0.19.1",
