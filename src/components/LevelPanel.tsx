@@ -1,14 +1,15 @@
 import { useMemo, useState } from 'react';
-import { coefNLatex, shortInt, shortNum, workLatex } from '../math/format';
-import { toLatex, toNumber } from '../math/rational';
+import { coefNLatex, shortInt, shortNum, workLatex, workText } from '../math/format';
+import { toNumber } from '../math/rational';
 import { exactLog, powerLatex, levelTotalCoef, levelTuples, tupleTotalCoef, type Analysis, type ConcreteLevel } from '../math/recurrence';
 import { useHl, useLearnable } from '../state/selection';
 import { Tex } from './Tex';
+import { rShortLatex, rShortText } from './rfmt';
 import { p0Parts } from '../explain/tex';
 
 interface Row {
   level: number;
-  tuples: { den: bigint; work: string; count: string; base?: boolean; share?: number }[];
+  tuples: { den: bigint; work: string; count: string; label: string; base?: boolean; share?: number }[];
   totalTex: string;
   value: number;
   /** fraction of the level total contributed by each branch (last step) */
@@ -32,7 +33,7 @@ export function LevelPanel({ analysis: a, levels, concrete, hidden, hintLevels }
     if (concrete)
       return concrete.levels.map((l) => ({
         level: l.level,
-        tuples: l.tuples.map((t) => ({ den: t.den, work: t.leaf ? '1' : shortNum(t.work), count: shortInt(t.count), base: t.leaf })),
+        tuples: l.tuples.map((t) => ({ den: t.den, work: t.leaf ? '1' : shortNum(t.work), count: shortInt(t.count), label: nodesLabel(shortInt(t.count), t.leaf ? '1 unit of' : shortNum(t.work)), base: t.leaf })),
         totalTex: shortNum(l.total).replace(/,/g, '{,}'),
         value: l.total,
         shares: l.level === 0 ? [] : l.totalByBranch.map((x) => x / l.total),
@@ -40,7 +41,7 @@ export function LevelPanel({ analysis: a, levels, concrete, hidden, hintLevels }
     const shares = a.termRatios.map((q) => toNumber(q) / a.rNumber);
     return [...Array(levels).keys()].map((l) => ({
       level: l,
-      tuples: levelTuples(a.rec, l).map((t) => ({ den: t.den, work: workLatex(t.den, d), count: shortInt(t.count), share: toNumber(tupleTotalCoef(t, d)) })),
+      tuples: levelTuples(a.rec, l).map((t) => ({ den: t.den, work: workLatex(t.den, d), count: shortInt(t.count), label: nodesLabel(shortInt(t.count), workText(t.den, d)), share: toNumber(tupleTotalCoef(t, d)) })),
       totalTex: coefNLatex(levelTotalCoef(a.rec, l), d),
       value: toNumber(levelTotalCoef(a.rec, l)),
       shares: l === 0 ? [] : shares,
@@ -61,11 +62,11 @@ export function LevelPanel({ analysis: a, levels, concrete, hidden, hintLevels }
 
   return (
     <div className="levels">
-      <div className="levels-head" role="row">
+      <div className="levels-head" aria-hidden>
         <span>Level</span>
-        <span>(work per node, number of nodes)</span>
-        <span className="t-right">Total</span>
-        <span className="bars-head">Level total</span>
+        <span>(work each, nodes)</span>
+        <span className="levels-head-total">Level total</span>
+        <span className="t-right" title="Each level's total divided by the one above">Ratio</span>
       </div>
       <ol className="level-rows" aria-label="Work per level">
         {rows.map((row, i) => (
@@ -75,7 +76,8 @@ export function LevelPanel({ analysis: a, levels, concrete, hidden, hintLevels }
             max={max}
             hide={hidden && row.level >= hintLevels}
             ratio={i > 0 ? (concrete ? row.value / rows[i - 1].value : null) : undefined}
-            r={toLatex(a.r)}
+            r={rShortLatex(a.r).replace('\\approx ', '')}
+            rText={rShortText(a.r)}
             concrete={!!concrete}
           />
         ))}
@@ -83,7 +85,9 @@ export function LevelPanel({ analysis: a, levels, concrete, hidden, hintLevels }
           <>
             <li className="level-gap" aria-hidden>
               <span>⋮</span>
-              <span className="muted small">each level ×{' '}<Tex tex={hidden ? '?' : toLatex(a.r)} /> the one above, down to level <Tex tex={`\\log_{${a.minB}} n`} /></span>
+              <span className="muted small">
+                {!hidden && a.case === 'equal' ? 'every level has the same total' : <>each level is <Tex tex={hidden ? '?' : rShortLatex(a.r)} /> × the one above</>}, down to level <Tex tex={`\\log_{${a.minB}} n`} />
+              </span>
             </li>
             <LeafRow leafCount={leafCount} multi={a.rec.terms.length > 1} />
           </>
@@ -93,7 +97,7 @@ export function LevelPanel({ analysis: a, levels, concrete, hidden, hintLevels }
   );
 }
 
-function LevelRow({ row, max, hide, ratio, r, concrete }: { row: Row; max: number; hide: boolean; ratio: number | null | undefined; r: string; concrete: boolean }) {
+function LevelRow({ row, max, hide, ratio, r, rText, concrete }: { row: Row; max: number; hide: boolean; ratio: number | null | undefined; r: string; rText: string; concrete: boolean }) {
   const [open, setOpen] = useState(false);
   const learn = useLearnable({ kind: 'level', level: row.level });
   const hl = useHl([`level:${row.level}`, `total:${row.level}`, `bar:${row.level}`]);
@@ -102,11 +106,6 @@ function LevelRow({ row, max, hide, ratio, r, concrete }: { row: Row; max: numbe
   const width = max > 0 ? (row.value / max) * 100 : 0;
   return (
     <li className={`level-row hl-${hl || 'none'}`}>
-      {ratio !== undefined && (
-        <span className={`ratio-mark ${hide ? 'hidden' : ''}`} aria-hidden>
-          <RatioMark text={hide ? '×?' : ratio === null ? `×${r}` : `×${shortNum(Math.round(ratio * 100) / 100)}`} tex={ratio === null && !hide} r={r} />
-        </span>
-      )}
       <button className="level-num" {...learn} aria-label={`Level ${row.level}`}>
         {row.level}
       </button>
@@ -125,8 +124,11 @@ function LevelRow({ row, max, hide, ratio, r, concrete }: { row: Row; max: numbe
       </span>
       <span className={`bar-cell hl-${barHl || 'none'}`} {...learn} aria-label={hide ? 'hidden until you predict' : `bar ${Math.round(width)}% of the largest level`}>
         <span className={`bar ${hide ? 'bar-hidden' : ''}`} style={{ width: hide ? '100%' : `max(3px, ${width}%)` }}>
-          {row.shares.length === 0 ? <span className="seg root" style={{ width: '100%' }} /> : row.shares.map((s, i) => <BarSeg key={i} i={i} share={s} />)}
+          {row.shares.length === 0 ? <span className="bar-seg root" style={{ width: '100%' }} /> : row.shares.map((s, i) => <BarSeg key={i} i={i} share={s} />)}
         </span>
+      </span>
+      <span className="ratio-mark" aria-label={ratio === undefined ? undefined : hide ? 'ratio hidden until you predict' : `${ratio === null ? rText : shortNum(Math.round(ratio * 100) / 100)} times the level above`}>
+        {ratio !== undefined && <RatioMark text={hide ? '×?' : ratio === null ? `×${r}` : `×${shortNum(Math.round(ratio * 100) / 100)}`} tex={ratio === null && !hide} r={r} />}
       </span>
     </li>
   );
@@ -139,14 +141,14 @@ function RatioMark({ text, tex, r }: { text: string; tex: boolean; r: string }) 
 
 function BarSeg({ i, share }: { i: number; share: number }) {
   const hl = useHl([`branch:${i}`]);
-  return <span className={`seg b${i} hl-${hl || 'none'}`} style={{ width: `${share * 100}%` }} />;
+  return <span className={`bar-seg b${i} hl-${hl || 'none'}`} style={{ width: `${share * 100}%` }} />;
 }
 
 function TupleChip({ level, t, concrete }: { level: number; t: Row['tuples'][number]; concrete: boolean }) {
   const learn = useLearnable({ kind: 'tuple', level, den: String(t.den) });
   const hl = useHl([`tuple:${level}:${t.den}`]);
   return (
-    <span className={`tuple hl-${hl || 'none'} ${t.base ? 'base' : ''}`} {...learn} aria-label={`${t.count} nodes doing ${t.work} work each`}>
+    <span className={`tuple hl-${hl || 'none'} ${t.base ? 'base' : ''}`} {...learn} aria-label={t.label}>
       {concrete ? (
         <span className="tuple-plain">
           ({t.work}, {t.count})
@@ -176,6 +178,9 @@ function LeafRow({ leafCount, multi }: { leafCount: string; multi: boolean }) {
         <Tex tex={leafCount} />
       </span>
       <span className="bar-cell muted small leaf-note">{multi ? '' : 'one unit each'}</span>
+      <span className="ratio-mark" />
     </li>
   );
 }
+
+const nodesLabel = (count: string, work: string) => `${count} ${count === '1' ? 'node' : 'nodes'}, ${work} work each`;

@@ -3,7 +3,7 @@ import { shortInt, shortNum, sizeText, superscript, workText } from '../math/for
 import { p0Parts } from '../explain/tex';
 import type { Analysis, ConcreteLevel } from '../math/recurrence';
 import { useHl, useLearnable, useSelection } from '../state/selection';
-import { defaultRealDepth, layoutTree, LEVEL_GAP, NODE_CAP, NODE_H, NODE_W, type Band, type LNode } from '../tree/layout';
+import { defaultRealDepth, layoutTree, LEVEL_GAP, NODE_CAP, NODE_H, NODE_W, type Band, type Chip, type LNode } from '../tree/layout';
 
 interface Props {
   analysis: Analysis;
@@ -15,6 +15,72 @@ interface Props {
 }
 
 type View = { x: number; y: number; k: number };
+
+/** one level per step when a tree builds from the root */
+const BUILD_STEP_MS = 320;
+/** matches --t-slow: removed nodes animate out over this long */
+const EXIT_MS = 480;
+/** room on the left for the level labels */
+const LABEL_W = 64;
+
+const nodeKey = (v: LNode) => v.id;
+const chipKey = (c: Chip) => `${c.level}:${c.den}`;
+
+const ARROWS: Record<string, [number, number]> = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
+
+/**
+ * Spatial navigation: the item nearest to `cur` in direction `dir`.
+ * Left/right stay on the same row; up/down prefer the closest row, then the closest x.
+ */
+function nearestInDirection(cur: Element, items: Element[], [dx, dy]: [number, number]): SVGElement | null {
+  const c = cur.getBoundingClientRect();
+  const cx = c.left + c.width / 2;
+  const cy = c.top + c.height / 2;
+  let best: SVGElement | null = null;
+  let bestScore = Infinity;
+  for (const it of items) {
+    if (it === cur) continue;
+    const r = it.getBoundingClientRect();
+    const x = r.left + r.width / 2 - cx;
+    const y = r.top + r.height / 2 - cy;
+    let score: number;
+    if (dx) {
+      if (Math.sign(x) !== dx || Math.abs(y) > Math.max(c.height, r.height) / 2) continue;
+      score = Math.abs(x) + Math.abs(y) * 4;
+    } else {
+      if (Math.sign(y) !== dy || Math.abs(y) < 4) continue;
+      score = Math.abs(y) * 3 + Math.abs(x);
+    }
+    if (score < bestScore) {
+      bestScore = score;
+      best = it as SVGElement;
+    }
+  }
+  return best;
+}
+
+/**
+ * Keeps removed items rendered for `ms` (flagged `leaving`) so they can animate out.
+ * Uses the "adjust state while rendering" pattern so a removed item never unmounts
+ * for a frame before it starts leaving.
+ */
+function usePresence<T>(items: T[], key: (t: T) => string, ms: number): { item: T; leaving: boolean }[] {
+  const [prev, setPrev] = useState(items);
+  const [gone, setGone] = useState<Map<string, T>>(() => new Map());
+  if (items !== prev) {
+    const now = new Set(items.map(key));
+    const next = new Map([...gone].filter(([k]) => !now.has(k)));
+    if (ms > 0) for (const p of prev) if (!now.has(key(p))) next.set(key(p), p);
+    setPrev(items);
+    setGone(next);
+  }
+  useEffect(() => {
+    if (!gone.size) return;
+    const t = setTimeout(() => setGone(new Map()), ms);
+    return () => clearTimeout(t);
+  }, [gone, ms]);
+  return useMemo(() => [...items.map((item) => ({ item, leaving: false })), ...[...gone.values()].map((item) => ({ item, leaving: true }))], [items, gone]);
+}
 
 export function TreeView({ analysis, maxLevel, concrete, buildKey, reducedMotion }: Props) {
   const rec = analysis.rec;
@@ -33,21 +99,18 @@ export function TreeView({ analysis, maxLevel, concrete, buildKey, reducedMotion
     setExpanded(new Set());
   }, [recKey, baseDepth]);
 
-  // Build animation: reveal one level at a time.
+  // Build animation: reveal one level at a time. The reset happens during
+  // render so the finished new tree never flashes for a frame first.
+  const [seenBuildKey, setSeenBuildKey] = useState(buildKey);
+  if (buildKey !== seenBuildKey) {
+    setSeenBuildKey(buildKey);
+    setBuildDepth(reducedMotion ? Infinity : 0);
+  }
   useEffect(() => {
-    if (buildKey === 0 || reducedMotion) {
-      setBuildDepth(Infinity);
-      return;
-    }
-    setBuildDepth(0);
-    let d = 0;
-    const id = setInterval(() => {
-      d++;
-      setBuildDepth(d);
-      if (d > maxLevel) clearInterval(id);
-    }, 320);
-    return () => clearInterval(id);
-  }, [buildKey, reducedMotion, maxLevel]);
+    if (buildDepth > maxLevel) return;
+    const t = setTimeout(() => setBuildDepth((d) => d + 1), BUILD_STEP_MS);
+    return () => clearTimeout(t);
+  }, [buildDepth, maxLevel]);
 
   const layout = useMemo(
     () =>
@@ -60,6 +123,17 @@ export function TreeView({ analysis, maxLevel, concrete, buildKey, reducedMotion
         concrete,
       }),
     [recKey, maxLevel, buildDepth, realDepth, collapsed, expanded, concrete], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  const symbolicTail = !concrete && layout.maxLevel === maxLevel;
+
+  // Removed nodes, edges and chips stay mounted briefly so they can animate out.
+  const exitMs = reducedMotion ? 0 : EXIT_MS;
+  const nodes = usePresence(layout.nodes, nodeKey, exitMs);
+  const chips = usePresence(
+    useMemo(() => layout.bands.flatMap((b) => b.chips), [layout.bands]),
+    chipKey,
+    exitMs,
   );
 
   useEffect(() => {
@@ -127,18 +201,20 @@ export function TreeView({ analysis, maxLevel, concrete, buildKey, reducedMotion
   const fit = useCallback(
     (animate = true) => {
       const { x0, x1, y0, y1 } = layout.bounds;
-      const pad = 36;
-      const bw = x1 - x0 + 80; // room for level labels
-      const bh = y1 - y0 + 70; // room for the tail note
+      const pad = 16;
+      const bw = x1 - x0 + LABEL_W; // room for level labels
+      const bh = y1 - y0 + (symbolicTail ? 64 : 16); // room for the tail note
       const kw = (size.w - pad * 2) / bw;
-      const kh = (size.h - pad * 2) / bh;
+      // the zoom buttons sit in the top-right corner: leave them a strip
+      const kh = (size.h - pad * 2 - 28) / bh;
       // Fit everything when that stays readable; for tall trees fit the width and let the user pan down.
       const k = Math.max(0.2, Math.min(1.25, Math.max(Math.min(kw, kh), Math.min(kw, 0.72))));
-      const cx = (x0 - 80 + x1) / 2;
+      const cx = (x0 - LABEL_W + x1) / 2;
+      const fitsH = bh * k <= size.h - pad * 2 - 28;
       setAnimView(animate && !reducedMotion);
-      setView({ k, x: size.w / 2 - cx * k, y: pad + (-y0 + 8) * k });
+      setView({ k, x: size.w / 2 - cx * k, y: (fitsH ? (size.h - bh * k) / 2 + 14 : pad + 28) - y0 * k });
     },
-    [layout.bounds, size, reducedMotion],
+    [layout.bounds, size, reducedMotion, symbolicTail],
   );
 
   // Refit when the recurrence, mode or container changes (not on expand/collapse).
@@ -231,14 +307,50 @@ export function TreeView({ analysis, maxLevel, concrete, buildKey, reducedMotion
 
   const { select } = useSelection();
 
+  const lastFocus = useRef<string | null>(null);
+  // keep a focused item inside the visible part of the canvas
+  const reveal = (el: Element) => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const s = svg.getBoundingClientRect();
+    const r = el.getBoundingClientRect();
+    const m = 24;
+    const dx = r.left < s.left + m ? s.left + m - r.left : r.right > s.right - m ? s.right - m - r.right : 0;
+    const dy = r.top < s.top + m + 28 ? s.top + m + 28 - r.top : r.bottom > s.bottom - m ? s.bottom - m - r.bottom : 0;
+    if (dx || dy) {
+      setAnimView(!reducedMotion);
+      setView((v) => ({ ...v, x: v.x + dx, y: v.y + dy }));
+    }
+  };
+  const focusItem = (el: HTMLElement | SVGElement) => {
+    el.focus({ preventScroll: true });
+    lastFocus.current = el.dataset.nav ?? null;
+    reveal(el);
+  };
   const onKeyDown = (e: React.KeyboardEvent) => {
-    if (e.target !== e.currentTarget) return;
-    const step = 40;
-    const moves: Record<string, [number, number]> = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
-    if (moves[e.key]) {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const dir = ARROWS[e.key];
+    if (dir && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
       e.preventDefault();
-      setAnimView(true);
-      setView((v) => ({ ...v, x: v.x + moves[e.key][0], y: v.y + moves[e.key][1] }));
+      const items = [...svg.querySelectorAll<SVGElement>('[data-nav]')];
+      if (!items.length) return;
+      const cur = e.target instanceof SVGElement && e.target.dataset.nav ? e.target : null;
+      if (!cur) {
+        const back = lastFocus.current ? items.find((i) => i.dataset.nav === lastFocus.current) : undefined;
+        focusItem(back ?? items.find((i) => i.dataset.nav === 'node:') ?? items[0]);
+        return;
+      }
+      const next = nearestInDirection(cur, items, dir);
+      if (next) focusItem(next);
+      return;
+    }
+    if (dir) {
+      // Shift + arrows pan the view
+      e.preventDefault();
+      const step = 60;
+      setAnimView(!reducedMotion);
+      setView((v) => ({ ...v, x: v.x - dir[0] * step, y: v.y - dir[1] * step }));
     } else if (e.key === '+' || e.key === '=') zoomAt(1.25, size.w / 2, size.h / 2, true);
     else if (e.key === '-') zoomAt(0.8, size.w / 2, size.h / 2, true);
     else if (e.key === '0') fit(true);
@@ -252,10 +364,20 @@ export function TreeView({ analysis, maxLevel, concrete, buildKey, reducedMotion
   const byId = useMemo(() => new Map(layout.nodes.map((v) => [v.id, v])), [layout.nodes]);
   const { x0, x1 } = layout.bounds;
   const lastY = layout.levelY(layout.maxLevel);
-  const symbolicTail = !concrete && layout.maxLevel === maxLevel;
+  // where a removed node goes: its nearest ancestor that is still drawn
+  const exitTarget = (id: string): LNode => {
+    let p: string | null = id;
+    while (p !== null) {
+      const hit = byId.get(p);
+      if (hit) return hit;
+      p = p.length ? p.slice(0, -2) : null;
+    }
+    return layout.nodes[0];
+  };
 
   return (
-    <div className="tree-wrap" ref={wrapRef}>
+    <div className="tree-wrap">
+      <div className="tree-canvas" ref={wrapRef}>
       <svg
         ref={svgRef}
         className={`tree-svg ${drag.current?.moved ? 'grabbing' : ''}`}
@@ -263,7 +385,7 @@ export function TreeView({ analysis, maxLevel, concrete, buildKey, reducedMotion
         height={size.h}
         tabIndex={0}
         role="group"
-        aria-label="Recursion tree. Drag to pan, scroll or pinch to zoom, arrow keys to pan, plus and minus to zoom, 0 to reset."
+        aria-label="Recursion tree. Arrow keys move between nodes; Enter explains or expands the focused one. Shift and arrow keys pan, plus and minus zoom, 0 resets the view."
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -288,19 +410,22 @@ export function TreeView({ analysis, maxLevel, concrete, buildKey, reducedMotion
               ))}
             </g>
           ))}
-          {layout.nodes.map((v) => {
-            if (!v.parent && v.parent !== '') return null;
-            const p = byId.get(v.parent);
-            return p ? <Edge key={`e${v.id}`} from={p} to={v} /> : null;
+          {nodes.map(({ item: v, leaving }) => {
+            if (v.parent === null) return null;
+            const p = leaving ? exitTarget(v.parent) : byId.get(v.parent);
+            return p ? <Edge key={`e${v.id}`} from={p} to={v} leaving={leaving} /> : null;
           })}
-          {layout.bands.map((b) => (
-            <BandView key={`b${b.level}`} band={b} sizeLabel={sizeLabel} workLabel={workLabel} onExpand={() => expandLevel(b)} />
+          {chips.map(({ item: c, leaving }) => (
+            <ChipView key={chipKey(c)} chip={c} size={sizeLabel(c.den)} work={workLabel(c.den, c.base)} leaving={leaving} />
           ))}
-          {layout.nodes.map((v) => {
-            const p = v.parent !== null ? byId.get(v.parent) : undefined;
-            return <NodeView key={v.id} node={v} from={p ?? v} size={sizeLabel(v.den)} work={workLabel(v.den, v.base)} onToggle={toggle} />;
+          {layout.bands.map((b) => (
+            <BandView key={`b${b.level}`} band={b} onExpand={() => expandLevel(b)} />
+          ))}
+          {nodes.map(({ item: v, leaving }) => {
+            const p = v.parent !== null ? (leaving ? exitTarget(v.parent) : byId.get(v.parent)) : undefined;
+            return <NodeView key={v.id} node={v} from={p ?? v} size={sizeLabel(v.den)} work={workLabel(v.den, v.base)} onToggle={toggle} leaving={leaving} />;
           })}
-          {symbolicTail && <Tail y={lastY + NODE_H / 2 + 26} x={(x0 + x1) / 2} analysis={analysis} />}
+          {symbolicTail && <Tail y={lastY + NODE_H / 2 + 24} x={(x0 + x1) / 2} analysis={analysis} />}
         </g>
       </svg>
       <div className="tree-tools" role="toolbar" aria-label="Tree view">
@@ -314,6 +439,12 @@ export function TreeView({ analysis, maxLevel, concrete, buildKey, reducedMotion
           <svg viewBox="0 0 16 16" aria-hidden><path d="M2.5 6V2.5H6M10 2.5h3.5V6M13.5 10v3.5H10M6 13.5H2.5V10" /></svg>
         </button>
       </div>
+      {notice && (
+        <div className="tree-notice" role="status">
+          {notice}
+        </div>
+      )}
+      </div>
       <div className="tree-legend" aria-hidden>
         {rec.terms.map((t, i) => (
           <span key={i} className={`legend-item b${i}`}>
@@ -323,13 +454,8 @@ export function TreeView({ analysis, maxLevel, concrete, buildKey, reducedMotion
         <span className="legend-item grouped">
           <i /> grouped
         </span>
-        <span className="legend-count">{layout.realCount} drawn</span>
+        <span className="legend-count">{layout.realCount} {layout.realCount === 1 ? "node" : "nodes"} drawn</span>
       </div>
-      {notice && (
-        <div className="tree-notice" role="status">
-          {notice}
-        </div>
-      )}
     </div>
   );
 }
@@ -351,19 +477,19 @@ function useEntered() {
 
 const LevelBand = memo(function LevelBand({ level, x0, x1, y }: { level: number; x0: number; x1: number; y: number }) {
   const hl = useHl([`level:${level}`]);
-  const learn = useLearnable({ kind: 'level', level });
+  const learn = useLearnable({ kind: 'level', level }, { tabIndex: -1 });
   return (
     <g className={`level-band hl-${hl || 'none'}`}>
-      <rect x={x0} y={y - LEVEL_GAP / 2 + 6} width={x1 - x0} height={LEVEL_GAP - 12} rx={12} />
-      <text x={x0 + 14} y={y + 4} className="level-label" {...learn} aria-label={`Level ${level}`}>
+      <rect x={x0} y={y - LEVEL_GAP / 2 + 6} width={x1 - x0} height={LEVEL_GAP - 12} rx={10} />
+      <text x={x0 + 14} y={y + 4} className="level-label" {...learn} data-nav={`level:${level}`} aria-label={`Level ${level}`}>
         L{level}
       </text>
     </g>
   );
 });
 
-function Edge({ from, to }: { from: LNode; to: LNode }) {
-  const entered = useEntered();
+function Edge({ from, to, leaving }: { from: LNode; to: LNode; leaving: boolean }) {
+  const entered = useEntered() && !leaving;
   const px = from.x;
   const py = from.y + NODE_H / 2;
   const dx = entered ? to.x - from.x : 0;
@@ -377,21 +503,21 @@ function Edge({ from, to }: { from: LNode; to: LNode }) {
       y2={1}
       className={`edge b${to.branch} hl-${hl || 'none'}`}
       vectorEffect="non-scaling-stroke"
-      style={{ transform: `translate(${px}px, ${py}px) scale(${dx || 0.0001}, ${dy || 0.0001})` }}
+      style={{ transform: `translate(${px}px, ${py}px) scale(${dx || 0.0001}, ${dy || 0.0001})`, opacity: leaving ? 0 : undefined }}
     />
   );
 }
 
-const NodeView = memo(function NodeView({ node, from, size, work, onToggle }: { node: LNode; from: LNode; size: string; work: string; onToggle: (v: LNode) => void }) {
-  const entered = useEntered();
+const NodeView = memo(function NodeView({ node, from, size, work, onToggle, leaving }: { node: LNode; from: LNode; size: string; work: string; onToggle: (v: LNode) => void; leaving: boolean }) {
+  const entered = useEntered() && !leaving;
   const keys = [`node:${node.id}`, `tuple:${node.level}:${node.den}`, `branch:${node.branch}`];
   const hl = useHl(keys);
-  const learn = useLearnable({ kind: 'node', path: node.id });
+  const learn = useLearnable({ kind: 'node', path: node.id }, { tabIndex: -1 });
   const x = entered ? node.x : from.x;
   const y = entered ? node.y : from.y;
   return (
-    <g className={`node-pos`} style={{ transform: `translate(${x}px, ${y}px) scale(${entered ? 1 : 0.2})`, opacity: entered ? 1 : 0 }}>
-      <g className={`node b${node.branch} ${node.base ? 'base' : ''} hl-${hl || 'none'}`} {...learn} aria-label={`Node at level ${node.level}, size ${size}, work ${work}`}>
+    <g className={`node-pos ${leaving ? 'leaving' : ''}`} aria-hidden={leaving || undefined} style={{ transform: `translate(${x}px, ${y}px) scale(${entered ? 1 : 0.2})`, opacity: entered ? 1 : 0 }}>
+      <g className={`node b${node.branch} ${node.base ? 'base' : ''} hl-${hl || 'none'}`} {...(leaving ? {} : learn)} data-nav={leaving ? undefined : `node:${node.id}`} aria-label={`Level ${node.level} node: size ${size}, work ${work}`}>
         <rect x={-NODE_W / 2} y={-NODE_H / 2} width={NODE_W} height={NODE_H} rx={10} />
         <text y={-2} className="node-size">
           {size}
@@ -400,12 +526,13 @@ const NodeView = memo(function NodeView({ node, from, size, work, onToggle }: { 
           work {work}
         </text>
       </g>
-      {node.expandable && (
+      {node.expandable && !leaving && (
         <g
           className={`knob ${node.open ? 'open' : 'closed'}`}
           role="button"
-          tabIndex={0}
-          aria-label={node.open ? 'Collapse children' : 'Expand children'}
+          tabIndex={-1}
+          data-nav={`knob:${node.id}`}
+          aria-label={node.open ? `Hide the children of this ${size} node` : `Show the children of this ${size} node`}
           aria-expanded={node.open}
           onClick={(e) => {
             e.stopPropagation();
@@ -428,12 +555,9 @@ const NodeView = memo(function NodeView({ node, from, size, work, onToggle }: { 
   );
 });
 
-function BandView({ band, sizeLabel, workLabel, onExpand }: { band: Band; sizeLabel: (d: bigint) => string; workLabel: (d: bigint, base: boolean) => string; onExpand: () => void }) {
+function BandView({ band, onExpand }: { band: Band; onExpand: () => void }) {
   return (
     <g className="band">
-      {band.chips.map((c) => (
-        <ChipView key={String(c.den)} chip={c} size={sizeLabel(c.den)} work={workLabel(c.den, c.base)} />
-      ))}
       {band.more > 0 && (
         <text x={band.x1 + 10} y={band.y + 4} className="band-more">
           +{band.more} sizes
@@ -442,8 +566,9 @@ function BandView({ band, sizeLabel, workLabel, onExpand }: { band: Band; sizeLa
       <g
         className={`band-expand ${band.canExpand ? '' : 'disabled'}`}
         role="button"
-        tabIndex={0}
-        aria-label={band.canExpand ? `Draw level ${band.level} as individual nodes` : `Level ${band.level} has too many nodes to draw`}
+        tabIndex={-1}
+        data-nav={`expand:${band.level}`}
+        aria-label={band.canExpand ? `Draw level ${band.level} as individual nodes` : `Level ${band.level} has too many nodes to draw one by one`}
         aria-disabled={!band.canExpand}
         transform={`translate(${band.x0 - 16}, ${band.y})`}
         onClick={(e) => {
@@ -453,6 +578,7 @@ function BandView({ band, sizeLabel, workLabel, onExpand }: { band: Band; sizeLa
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') {
             e.preventDefault();
+            e.stopPropagation();
             onExpand();
           }
         }}
@@ -465,18 +591,19 @@ function BandView({ band, sizeLabel, workLabel, onExpand }: { band: Band; sizeLa
   );
 }
 
-function ChipView({ chip, size, work }: { chip: Band['chips'][number]; size: string; work: string }) {
-  const entered = useEntered();
+function ChipView({ chip, size, work, leaving }: { chip: Chip; size: string; work: string; leaving: boolean }) {
+  const entered = useEntered() && !leaving;
   const keys = [`tuple:${chip.level}:${chip.den}`];
   const hl = useHl(keys);
-  const learn = useLearnable({ kind: 'tuple', level: chip.level, den: String(chip.den) });
+  const learn = useLearnable({ kind: 'tuple', level: chip.level, den: String(chip.den) }, { tabIndex: -1 });
+  const count = shortInt(chip.count);
   return (
-    <g className="chip-pos" style={{ transform: `translate(${chip.x}px, ${chip.y}px)`, opacity: entered ? 1 : 0 }}>
-      <g className={`chip ${chip.base ? 'base' : ''} hl-${hl || 'none'}`} {...learn} aria-label={`${shortInt(chip.count)} nodes of size ${size}`}>
+    <g className={`chip-pos ${leaving ? 'leaving' : ''}`} aria-hidden={leaving || undefined} style={{ transform: `translate(${chip.x}px, ${chip.y}px)`, opacity: entered ? 1 : 0 }}>
+      <g className={`chip ${chip.base ? 'base' : ''} hl-${hl || 'none'}`} {...(leaving ? {} : learn)} data-nav={leaving ? undefined : `chip:${chipKey(chip)}`} aria-label={`Level ${chip.level}: ${count} ${count === '1' ? 'node' : 'nodes'} of size ${size}${chip.base ? ', base cases' : `, work ${work} each`}`}>
         <rect x={-chip.w / 2} y={-NODE_H / 2} width={chip.w} height={NODE_H} rx={10} />
-        <rect x={-chip.w / 2 + 4} y={-NODE_H / 2 + 4} width={chip.w - 8} height={NODE_H - 8} rx={7} className="chip-inner" />
+        <rect x={-chip.w / 2 + 4} y={-NODE_H / 2 + 4} width={chip.w - 8} height={NODE_H - 8} rx={6} className="chip-inner" />
         <text y={-3} className="node-size">
-          {shortInt(chip.count)} × {size}
+          {count} × {size}
         </text>
         <text y={13} className="node-work">
           {chip.base ? 'base cases' : `work ${work} each`}
@@ -487,19 +614,19 @@ function ChipView({ chip, size, work }: { chip: Band['chips'][number]; size: str
 }
 
 function Tail({ x, y, analysis }: { x: number; y: number; analysis: Analysis }) {
-  const learn = useLearnable({ kind: 'leafrow' });
+  const learn = useLearnable({ kind: 'leafrow' }, { tabIndex: -1 });
   const hl = useHl(['leafrow']);
   const p = p0Parts(analysis);
   const single1 = analysis.rec.terms.length === 1 && analysis.rec.terms[0].a === 1;
   const pv = p.val === '1' ? 'n' : p.val === '0' ? '1' : `n${superscript(p.val.replace('/', 'ᐟ'))}`;
   const leaves = single1 ? '1 leaf' : `${p.exact ? '' : '≈ '}${pv} leaves`;
   return (
-    <g className={`tail hl-${hl || 'none'}`} {...learn} aria-label="Leaves of the tree">
+    <g className={`tail hl-${hl || 'none'}`} {...learn} data-nav="tail" aria-label={`The tree continues down to depth log base ${analysis.minB} of n, ending in ${leaves} of size 1`}>
       <text x={x} y={y} className="tail-dots">
         ⋮
       </text>
       <text x={x} y={y + 26} className="tail-text">
-        {`continues to depth log${sub(analysis.minB)} n · ${leaves} of size 1`}
+        {`continues to depth log${sub(analysis.minB)} n, ending in ${leaves} of size 1`}
       </text>
     </g>
   );

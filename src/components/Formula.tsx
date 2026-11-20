@@ -292,7 +292,8 @@ export function Formula({ rec, analysis, onEdit, onAddTerm, onRemoveTerm }: Prop
           <span className="hint-pencil" aria-hidden>
             <PencilIcon />
           </span>
-          Numbers with a pencil are editable. Point at any part to see what it means.
+          <span className="hint-fine">Click a dashed number to change it. Point at any other part to see what it means.</span>
+          <span className="hint-touch">Tap a dashed number to change it.</span>
         </span>
       </div>
     </div>
@@ -354,6 +355,8 @@ function FormulaTip({ id, tipKey, anchor, wrap, analysis, editing, onEnter, onLe
       style={pos ? { left: pos.left, top: pos.top, ['--arrow' as string]: `${pos.arrow}px` } : { left: 0, top: 0 }}
       onPointerEnter={onEnter}
       onPointerLeave={onLeave}
+      onFocus={onEnter}
+      onBlur={onLeave}
       // keep focus in the number being edited when the tooltip is clicked
       onMouseDown={(e) => e.preventDefault()}
     >

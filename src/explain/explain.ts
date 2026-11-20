@@ -4,26 +4,30 @@
  * plugs in the actual a, b and d, and says in words what is computed.
  * Rich text: $...$ is inline LaTeX.
  */
-import { mul, rat, toLatex } from '../math/rational';
+import { cmp, mul, ONE } from '../math/rational';
 import { levelTotalCoef, levelTuples, nodesAtLevel, nodeWorkCoef, tupleTotalCoef, termRatio, type Analysis, type ConcreteLevel } from '../math/recurrence';
-import { coefNLatex, nPowLatex, shortInt, shortNum, sizeLatex, workLatex } from '../math/format';
+import { coefNEq, coefNLatex, eqTex, nPowLatex, qPowTex, shortInt, shortIntTex, shortNum, shortNumTex, sizeLatex, workLatex } from '../math/format';
 import type { Entity, StepId } from '../state/entities';
 import { pathBranches, pathDen, pathLevel } from '../tree/layout';
 import { derivation } from './derivation';
-import { bigOTex, br, rSumTex, rTermTex, rValueTex } from './tex';
+import { bigOTex, br, rEqTex, rFullTex, rSumTex, rTermTex, rTex, timesWords } from './tex';
 import {
   calls,
   callsList,
+  does,
   exampleN,
   fAt,
+  levelRatioTex,
   levelSumTex,
   levelTotalTex,
   logOfExample,
+  ownWork,
   pieceOfInput,
   plural,
   tupleCountWords,
   whatIf,
   whatIfSentence,
+  workExample,
   workKind,
   workOfSizeM,
 } from './words';
@@ -54,6 +58,9 @@ const callTex = (a: Analysis, i: number) => {
 const ndOf = (a: Analysis) => nPowLatex(a.rec.d);
 const firstTotals = (a: Analysis) => [0, 1, 2, 3].map((l) => levelTotalTex(a.rec, l)).join(',\\ ') + ',\\ \\dots';
 const joinAnd = (xs: string[]) => (xs.length <= 1 ? xs.join('') : xs.length === 2 ? `${xs[0]} and ${xs[1]}` : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+const boundName = (a: Analysis) => a.bigO.latex.replace(/\\log n/, '\\log_2 n');
+/** "each does $1/16$ of the parent's work", or the d = 0 version where every call does 1 unit */
+const eachDoes = (b: number, d: number) => (d === 0 ? 'each does 1 unit, the same as its parent' : `each does $1/${shortIntTex(BigInt(b) ** BigInt(d))}$ of the parent's work`);
 
 /** "2·n/4 = n/2" for the root's calls on branch i */
 function rootShareTex(a: Analysis, i: number) {
@@ -128,7 +135,7 @@ export function partTip(e: Entity, a: Analysis): PartTip | null {
       const t = terms[e.term];
       return {
         name: `$${br(e.term, callTex(a, e.term))}$ · recursive ${plural(t.a, 'call')}`,
-        body: `${t.a === 1 ? 'One call' : `${t.a} calls`} to the same algorithm, ${t.a === 1 ? 'on' : 'each on'} $n/${t.b}$ (${pieceOfInput(t.b)}). ${t.a === 1 ? 'It breaks' : 'They break'} down the same way, which builds the tree.`,
+        body: `${t.a === 1 ? 'One call' : `${t.a} calls`} to the same algorithm, ${t.a === 1 ? 'on' : 'each on'} $n/${t.b}$ (${pieceOfInput(t.b)}). ${t.a === 1 ? 'It splits' : 'They split'} up the same way, which builds the tree.`,
         editable: false,
         editHint: `Edit the ${t.a} or the ${t.b} to change it.`,
       };
@@ -136,7 +143,7 @@ export function partTip(e: Entity, a: Analysis): PartTip | null {
     case 'fwork':
       return {
         name: `$${nd}$ · the non-recursive work`,
-        body: `Work each call does itself, outside its recursive calls (such as splitting the input and combining results). A call on size $m$ ${workOfSizeM(d)}: ${workKind(d)} work.`,
+        body: `The work each call does itself, outside its recursive calls. A call on size $m$ ${workOfSizeM(d)}: ${workKind(d)} work.`,
         editable: false,
         editHint: `Edit the exponent ${d} to change it.`,
       };
@@ -144,7 +151,7 @@ export function partTip(e: Entity, a: Analysis): PartTip | null {
       const t = terms[e.term];
       return {
         name: `$${br(e.term, `${sym(a, 'a', e.term)} = ${t.a}`)}$ · number of calls`,
-        body: `Each call makes ${t.a} recursive ${plural(t.a, 'call')} on $n/${t.b}$.${t.a === 1 ? ' (A 1 in front is usually left unwritten.)' : ''}`,
+        body: `Each call makes ${t.a} recursive ${plural(t.a, 'call')} on $n/${t.b}$.${t.a === 1 ? ' A 1 in front is usually left unwritten.' : ''}`,
         editable: true,
       };
     }
@@ -179,7 +186,7 @@ function explainLhs(ctx: ExplainCtx): Explanation {
       { h: 'What it is', body: `The total work needed to solve an input of size $n$, counting every recursive call all the way down. This is the unknown we are solving for.` },
       {
         h: 'Why this value',
-        body: `The right-hand side says where the work comes from. A call on size $n$ makes ${callsList(a.rec, { colour: true })}, then does $${ndOf(a)}$ work of its own. Each recursive call is again a $T(\\cdot)$ of a smaller size, so the calls form a tree.`,
+        body: `The right-hand side says where the work comes from. A call on size $n$ makes ${callsList(a.rec, { colour: true })}, then does ${ownWork(a.rec.d)} of its own. Each recursive call is again a $T(\\cdot)$ of a smaller size, so the calls form a tree.`,
       },
       {
         h: 'What it feeds',
@@ -197,20 +204,25 @@ function explainCall(i: number, ctx: ExplainCtx): Explanation {
   const t = a.rec.terms[i];
   const d = a.rec.d;
   const multi = a.rec.terms.length > 1;
-  const kids = (k: number) => shortInt(BigInt(t.a) ** BigInt(k));
+  const one = t.a === 1;
+  const grandkids = one ? `, which has 1 child of size $n/${t.b * t.b}$, and so on` : `, which have ${shortInt(BigInt(t.a) ** 2n)} children of size $n/${t.b * t.b}$, and so on`;
   return {
     title: `$${br(i, callTex(a, i))}$: recursive ${plural(t.a, 'call')}`,
     sections: [
-      { h: 'What it is', body: `${t.a === 1 ? 'One call' : `${t.a} calls`} to the same algorithm, ${t.a === 1 ? 'on' : 'each on'} an input of size $n/${t.b}$ (${pieceOfInput(t.b)}).` },
+      { h: 'What it is', body: `${one ? 'One call' : `${t.a} calls`} to the same algorithm, ${one ? 'on' : 'each on'} an input of size $n/${t.b}$ (${pieceOfInput(t.b)}).` },
       {
         h: 'Why this value',
-        body: `$T(n/${t.b})$ means "the total cost of solving an input of size $n/${t.b}$". The ${t.a} in front says there ${t.a === 1 ? 'is 1 such call' : `are ${t.a} such calls`}, so this part costs $${t.a === 1 ? '' : `${t.a}\\cdot `}T(n/${t.b})$. Each of those calls splits up in the same way, so the root has ${t.a} ${BRANCH_COLOUR[i]} ${plural(t.a, 'child', 'children')} of size $n/${t.b}$${multi ? '' : `, which have ${kids(2)} children of size $n/${t.b * t.b}$, and so on`}.`,
+        body: `$T(n/${t.b})$ means "the total cost of solving an input of size $n/${t.b}$". ${
+          one ? `With no number in front there is just 1 such call` : `The ${t.a} in front says there are ${t.a} such calls`
+        }, so this part costs $${one ? '' : `${t.a}\\cdot `}T(n/${t.b})$. Each of those calls splits up in the same way, so the root has ${t.a} ${BRANCH_COLOUR[i]} ${plural(t.a, 'child', 'children')} of size $n/${t.b}$${multi ? '' : grandkids}.`,
       },
       {
         h: 'What it feeds',
         body: locked
           ? `The ${BRANCH_COLOUR[i]} edges in the tree are these calls. ${LOCKED_NOTE}`
-          : `The ${BRANCH_COLOUR[i]} edges in the tree are these calls. Together the root's ${calls(t.a)} on $n/${t.b}$ do $${rootShareTex(a, i)}$ work${d === 0 ? '' : ` (${t.a} × $1/${t.b ** d}$ of the root's)`}, so this term's share of $r$ is $${rTermTex(t, d, i)}$.`,
+          : `The ${BRANCH_COLOUR[i]} edges in the tree are these calls. ${one ? `The root's 1 call on $n/${t.b}$ does` : `Together the root's ${t.a} calls on $n/${t.b}$ do`} $${rootShareTex(a, i)}$ work${
+              d === 0 ? '' : ` (${t.a} × $1/${shortIntTex(BigInt(t.b) ** BigInt(d))}$ of the root's)`
+            }, so this term's share of $r$ is $${rTermTex(t, d, i)}$.`,
       },
     ],
     next: { label: `Next: the ${t.a} in front`, entity: { kind: 'coef', term: i } },
@@ -229,7 +241,7 @@ function explainFwork(ctx: ExplainCtx): Explanation {
     sections: [
       {
         h: 'What it is',
-        body: `The work one call does by itself, outside its recursive calls, such as splitting the input and combining the subcalls' results. Here a call on size $m$ ${workOfSizeM(d)}: ${workKind(d)} work.`,
+        body: `The work one call does by itself, outside its recursive calls (${workExample(d)}). Here a call on size $m$ ${workOfSizeM(d)}: ${workKind(d)} work.`,
       },
       {
         h: 'Why this value',
@@ -272,7 +284,7 @@ function explainCoef(i: number, ctx: ExplainCtx): Explanation {
         h: 'What it feeds',
         body: locked
           ? `More calls means more work on every level below. ${LOCKED_NOTE}`
-          : `It is the top of this branch's share of $r$: $${rTermTex(t, d, i)}$ = (${t.a} ${plural(t.a, 'call')}) × (each does $1/${t.b ** d}$ of the parent's work). ${[whatIfSentence(`With ${t.a + 1} calls`, up), t.a > 1 ? whatIfSentence(`With ${t.a - 1}`, down) : ''].filter(Boolean).join(' ')}`,
+          : `It is the top of this branch's share of $r$: $${rTermTex(t, d, i)}$ = (${t.a} ${plural(t.a, 'call')}) × (${eachDoes(t.b, d)}). ${[whatIfSentence(`With ${t.a + 1} calls`, up), t.a > 1 ? whatIfSentence(`With ${t.a - 1}`, down) : ''].filter(Boolean).join(' ')}`,
       },
     ],
     next: NEXT_R,
@@ -285,13 +297,16 @@ function explainDiv(i: number, ctx: ExplainCtx): Explanation {
   const t = terms[i];
   const multi = terms.length > 1;
   const ex = exampleN(a);
+  const nEx = `$n = ${shortIntTex(ex.n)}$`;
   const depthWords = multi
     ? t.b === a.minB
-      ? `This is the slowest-shrinking branch, so it makes the deepest path: $\\log_{${t.b}} n$ levels (${logOfExample(ex.n, t.b)} for $n = ${shortInt(ex.n)}$).`
-      : `Always dividing by ${t.b}, a path reaches size 1 after $\\log_{${t.b}} n$ levels (${logOfExample(ex.n, t.b)} for $n = ${shortInt(ex.n)}$), sooner than the slowest branch.`
-    : `Dividing by ${t.b} each level, the size reaches 1 after $\\log_{${t.b}} n$ levels (${logOfExample(ex.n, t.b)} for $n = ${shortInt(ex.n)}$).`;
+      ? `This is the slowest-shrinking branch, so it makes the deepest path: $\\log_{${t.b}} n$ levels (${logOfExample(ex.n, t.b)} for ${nEx}).`
+      : `Always dividing by ${t.b}, a path reaches size 1 after $\\log_{${t.b}} n$ levels (${logOfExample(ex.n, t.b)} for ${nEx}), sooner than the slowest branch.`
+    : `Dividing by ${t.b} each level, the size reaches 1 after $\\log_{${t.b}} n$ levels (${logOfExample(ex.n, t.b)} for ${nEx}).`;
   const up = whatIf(a.rec, (r) => void (r.terms[i].b += 1));
   const down = whatIf(a.rec, (r) => void (r.terms[i].b -= 1));
+  const bd = shortIntTex(BigInt(t.b) ** BigInt(d));
+  const fraction = d === 1 ? `$\\frac{1}{${t.b}}$` : `$1/${t.b}^{${d}} = \\frac{1}{${bd}}$`;
   return {
     title: `$${br(i, `${sym(a, 'b', i)} = ${t.b}`)}$: shrink factor`,
     sections: [
@@ -301,15 +316,15 @@ function explainDiv(i: number, ctx: ExplainCtx): Explanation {
         body:
           d === 0
             ? `With $d = 0$ a call on $n/${t.b}$ still does 1 unit of work, so $b$ doesn't change the work per call. ${depthWords}`
-            : `A call on $n/${t.b}$ does $${fAt(BigInt(t.b), d)}$ work, which is $1/${t.b}^{${d}} = ${toLatex(rat(1, BigInt(t.b) ** BigInt(d)))}$ of what its parent does on $n$. ${depthWords}`,
+            : `A call on $n/${t.b}$ does $${fAt(BigInt(t.b), d)}$ work, which is ${fraction} of what its parent does on $n$. ${depthWords}`,
       },
       {
         h: 'What it feeds',
         body: locked
           ? `Smaller pieces mean less work per call. ${LOCKED_NOTE}`
           : d === 0
-            ? `Since $d = 0$, $b$ does not appear in $r$: it changes the depth, not the per-level ratio.`
-            : `$${t.b}^{${d}} = ${t.b ** d}$ is the bottom of this branch's share of $r$: $${rTermTex(t, d, i)}$. ${[whatIfSentence(`With $n/${t.b + 1}$`, up), t.b > 2 ? whatIfSentence(`With $n/${t.b - 1}$`, down) : ''].filter(Boolean).join(' ')}`,
+            ? `Since $d = 0$, $b$ does not appear in $r$: it changes the depth, not the ratio between levels.`
+            : `${d === 1 ? `The ${t.b}` : `$${t.b}^{${d}} = ${bd}$`} is the bottom of this branch's share of $r$: $${rTermTex(t, d, i)}$. ${[whatIfSentence(`With $n/${t.b + 1}$`, up), t.b > 2 ? whatIfSentence(`With $n/${t.b - 1}$`, down) : ''].filter(Boolean).join(' ')}`,
       },
     ],
     next: NEXT_R,
@@ -322,17 +337,22 @@ function explainExp(ctx: ExplainCtx): Explanation {
   const nd = ndOf(a);
   const up = whatIf(a.rec, (r) => void (r.d += 1));
   const down = whatIf(a.rec, (r) => void (r.d -= 1));
-  const perBranch = terms.map((t, i) => `a call on $${br(i, `n/${t.b}`)}$ does $${fAt(BigInt(t.b), d)}$${d === 0 ? '' : `, $1/${t.b ** d}$ as much`}`);
+  const perBranch = terms.map((t, i) => `a call on $${br(i, `n/${t.b}`)}$ does $${fAt(BigInt(t.b), d)}$${d === 0 ? '' : ` ($1/${shortIntTex(BigInt(t.b) ** BigInt(d))}$ as much)`}`);
   return {
     title: `$d = ${d}$: power of the non-recursive work`,
     sections: [
-      { h: 'What it is', body: `The ${d} in $n^{${d}}$${d === 1 ? ' (written without it, $n^1$ is just $n$)' : ''}: a call on size $m$ ${workOfSizeM(d)}, outside its recursive calls.` },
-      { h: 'Why this value', body: `The root does $${nd}$. ${joinAnd(perBranch).replace(/^a/, 'A')}.` },
+      {
+        h: 'What it is',
+        body: `${d === 1 ? 'The exponent in $n^1$, which is usually written just $n$' : `The ${d} in $n^{${d}}$`}: a call on size $m$ ${workOfSizeM(d)}, outside its recursive calls.`,
+      },
+      { h: 'Why this value', body: d === 0 ? `The root does 1 unit of work, and so does every smaller call.` : `The root does $${nd}$. ${joinAnd(perBranch).replace(/^a/, 'A')}.` },
       {
         h: 'What it feeds',
         body: locked
           ? `A bigger $d$ makes the top of the tree heavier compared with the rest. ${LOCKED_NOTE}`
-          : `$d$ is in every share of $r = ${rSumTex(a)}$: each share is (calls) ÷ $b^{${d}}$. ${[whatIfSentence(`With $d = ${d + 1}$`, up), whatIfSentence(`With $d = ${d - 1}$`, down)].filter(Boolean).join(' ')}`,
+          : `${
+              d === 0 ? `With $d = 0$, $b^0 = 1$, so each share of $r$ is just its number of calls.` : `$d$ is in every share of $r = ${rSumTex(a)}$: each share is (calls) ÷ $b${d === 1 ? '' : `^{${d}}`}$.`
+            } ${[whatIfSentence(`With $d = ${d + 1}$`, up), whatIfSentence(`With $d = ${d - 1}$`, down)].filter(Boolean).join(' ')}`,
       },
     ],
     next: NEXT_R,
@@ -351,17 +371,22 @@ function explainRterm(i: number, ctx: ExplainCtx): Explanation {
   const { a } = ctx;
   const { terms, d } = a.rec;
   const t = terms[i];
+  const each = d === 0 ? `${t.a} ${plural(t.a, 'call')}, each doing 1 unit like the root` : `${t.a} ${plural(t.a, 'call')} × $1/${shortIntTex(BigInt(t.b) ** BigInt(d))}$ each`;
   return {
     title: `Branch share $${rTermTex(t, d, i)}$`,
     sections: [
       { h: 'What it is', body: `How much work this branch's calls do, compared with the call that made them.` },
       {
         h: 'Why this value',
-        body: `The root does $${ndOf(a)}$. Its ${calls(t.a)} on $n/${t.b}$ each do $${workLatex(BigInt(t.b), d)}$, so together they do $${rootShareTex(a, i)}$. That is $${toLatex(a.termRatios[i])}$ of the root's work: ${t.a} ${plural(t.a, 'call')} × $1/${t.b ** d}$ each.`,
+        body: `The root does ${ownWork(d)}. ${
+          t.a === 1
+            ? `Its 1 call on $n/${t.b}$ does $${rootShareTex(a, i)}$.`
+            : `Its ${t.a} calls on $n/${t.b}$ each do $${workLatex(BigInt(t.b), d)}$, so together they do $${rootShareTex(a, i)}$.`
+        } That is ${timesWords(a.termRatios[i], "the root's work")}: ${each}.`,
       },
       {
         h: 'What it feeds',
-        body: `Adding every branch's share gives $r = ${rSumTex(a)} = ${toLatex(a.r)}$.${terms.length > 1 ? ` In the bars, the ${BRANCH_COLOUR[i]} part is ${pct(a, i)} of every level after the root.` : ''}`,
+        body: `Adding every branch's share gives $${rFullTex(a)}$.${terms.length > 1 ? ` In the bars, the ${BRANCH_COLOUR[i]} part is ${pct(a, i)} of every level after the root.` : ''}`,
       },
     ],
     next: NEXT_R,
@@ -371,22 +396,31 @@ function explainRterm(i: number, ctx: ExplainCtx): Explanation {
 function explainR(ctx: ExplainCtx): Explanation {
   const { a } = ctx;
   const { terms } = a.rec;
-  const r = toLatex(a.r);
-  const verdict = a.case === 'root' ? `$r < 1$, so the totals shrink and the root's level is the biggest` : a.case === 'equal' ? `$r = 1$, so every level does the same work` : `$r > 1$, so the totals grow and the bottom of the tree is the biggest`;
+  const r = rTex(a);
+  const t0 = terms[0];
+  const children =
+    terms.length > 1
+      ? `Its children: ${joinAnd(terms.map((t, i) => `the ${calls(t.a)} on $${br(i, `n/${t.b}`)}$ ${does(t.a)} $${rootShareTex(a, i)}$`))}. In total that is $${levelTotalTex(a.rec, 1)}$, which is ${timesWords(a.r, "the root's work")}.`
+      : `Its ${calls(t0.a)} on $n/${t0.b}$ ${does(t0.a)} $${levelSumTex(a.rec, 1)}$${t0.a === 1 ? '' : ' in total'}, which is ${timesWords(a.r, "the root's work")}.`;
+  const every = a.case === 'equal' ? 'every level matches the one above' : `every level is $${r}$ times the one above`;
+  const feeds =
+    a.case === 'root'
+      ? `The level totals shrink going down: $${firstTotals(a)}$ Since $r < 1$, the root's level is the biggest, so $T(n) = ${bigOTex(a)}$.`
+      : a.case === 'equal'
+        ? `Every level has the same total: $${firstTotals(a)}$ So the answer is one level's work times the number of levels: $T(n) = ${bigOTex(a)}$.`
+        : `The level totals grow going down: $${firstTotals(a)}$ Since $r > 1$, the bottom of the tree is the biggest, so $T(n) = ${bigOTex(a)}$.`;
   return {
-    title: `The ratio $r = ${r}$`,
+    title: `The ratio $${rEqTex(a)}$`,
     sections: [
       { h: 'What it is', body: `How many times as much work each level does as the level above it.` },
       {
         h: 'Why this value',
-        body: `Start at the root, which does $${ndOf(a)}$. ${
-          terms.length > 1 ? `Its children: ${joinAnd(terms.map((t, i) => `the ${calls(t.a)} on $${br(i, `n/${t.b}`)}$ do $${rootShareTex(a, i)}$`))}.` : `Its ${calls(terms[0].a)} on $n/${terms[0].b}$ do $${levelSumTex(a.rec, 1)}$.`
-        } In total that is $${levelTotalTex(a.rec, 1)}$, which is $${r}$ times the root's work. Every call's children compare to it the same way, so every level is $${r}$ times the one above: $r = ${rSumTex(a)} = ${rValueTex(a.r)}$.`,
+        body: `Start at the root, which does ${ownWork(a.rec.d)}. ${children} Every call's children compare to it the same way, so ${every}: $${rFullTex(a)}$.`,
       },
-      { h: 'What it feeds', body: `The level totals are $${firstTotals(a)}$. ${verdict}, so $T(n) = ${bigOTex(a)}$.` },
+      { h: 'What it feeds', body: feeds },
       {
         h: 'Check it',
-        body: `Level 2 is $${levelSumTex(a.rec, 2)}$, and $${toLatex(levelTotalCoef(a.rec, 2))} \\div ${toLatex(levelTotalCoef(a.rec, 1))} = ${r}$ again.`,
+        body: `Level 2 is $${levelSumTex(a.rec, 2)}$, and $${levelRatioTex(a.rec, a.r)}$ again.`,
       },
     ],
     next: NEXT_ANSWER,
@@ -416,7 +450,15 @@ function explainNode(path: string, ctx: ExplainCtx): Explanation {
   const concreteLeaf = concreteSize !== null && concreteSize <= 1;
   const kids = terms.map((t, i) => br(i, `${t.a === 1 ? '' : t.a}T(${sizeLatex(den * BigInt(t.b))})`)).join(' + ');
   const kidWork = terms.map((t, i) => br(i, `${t.a}\\cdot ${workLatex(den * BigInt(t.b), d)}`)).join(' + ');
-  const kidTotal = coefNLatex(mul(nodeWorkCoef(den, d), a.r), d);
+  const kidTotal = coefNEq(mul(nodeWorkCoef(den, d), a.r), d);
+  const oneKid = a.branching === 1n;
+  const makes = oneKid ? `It makes one call, $${kids}$, which does` : `It makes the calls $${kids}$. Together they do`;
+  const tupleWords =
+    tuple.count === 1n
+      ? level === 0
+        ? `It is the only call on level 0: the tuple $(${work}, 1)$.`
+        : `It is the only call of this size on level ${level}: the tuple $(${work}, 1)$.`
+      : `It is one of $${shortIntTex(tuple.count)}$ calls of this size on level ${level}: the tuple $(${work}, ${shortIntTex(tuple.count)})$.`;
   return {
     title: level === 0 ? 'The root: the original call' : `A call on level ${level}`,
     sections: [
@@ -424,22 +466,24 @@ function explainNode(path: string, ctx: ExplainCtx): Explanation {
         h: 'What it is',
         body:
           level === 0
-            ? `The original call, on the whole input of size $n${concrete ? ` = ${concrete.n}` : ''}$.`
-            : `One recursive call. Starting from $n$, its path divides by $${pathTex(a, path)}$, so its size is $${size}${concreteSize !== null ? ` = ${shortNum(concreteSize)}` : ''}$.`,
+            ? `The original call, on the whole input of size $n${concrete ? ` = ${shortIntTex(concrete.n)}` : ''}$.`
+            : `One recursive call. Starting from $n$, its path divides by $${pathTex(a, path)}$, so its size is $${size}${concreteSize !== null ? ` = ${shortNumTex(concreteSize)}` : ''}$.`,
       },
       {
         h: 'Why this value',
         body: concreteLeaf
           ? `Its size is at most 1, so it is a base case: it does 1 unit of work and makes no more calls.`
-          : `It does $${fAt(den, d)}$${concreteSize !== null ? ` = ${shortNum(Math.pow(concreteSize, d))}` : ''} work outside its recursive calls. It is one of $${shortInt(tuple.count)}$ calls of this size on level ${level}: the tuple $(${work}, ${shortInt(tuple.count)})$.`,
+          : `It does $${fAt(den, d)}${concreteSize !== null && d > 0 ? ` = ${shortNumTex(Math.pow(concreteSize, d))}` : ''}$ work outside its recursive calls. ${tupleWords}`,
       },
       {
         h: 'What it feeds',
         body: concreteLeaf
           ? `Leaves end the recursion. Their count sets the bottom level's total.`
           : ctx.locked
-            ? `It makes the calls $${kids}$, which do $${kidWork}$ work. Compare that with this call's own $${work}$: that comparison is your prediction.`
-            : `It makes the calls $${kids}$. They do $${kidWork} = ${kidTotal}$ work, which is $r = ${toLatex(a.r)}$ times this call's own $${work}$. Every call repeats this pattern.`,
+            ? `${oneKid ? `It makes one call, $${kids}$, which does` : `It makes the calls $${kids}$, which do`} $${kidWork}$ work. Compare that with this call's own $${work}$: that comparison is your prediction.`
+            : `${makes} $${kidWork} ${kidTotal}$ work, ${
+                a.case === 'equal' ? `the same as this call's own $${work}$ ($r = 1$)` : `which is $${rEqTex(a)}$ times this call's own $${work}$`
+              }. Every call repeats this pattern.`,
       },
     ],
     next: { label: `See level ${level}'s total`, entity: { kind: 'level', level } },
@@ -452,7 +496,7 @@ function compositionWords(a: Analysis, ks: number[], orderings: bigint, coef: bi
     .map((k, i) => (k ? `$${br(i, `\\div ${terms[i].b}`)}$ ${k === 1 ? 'once' : k === 2 ? 'twice' : `${k} times`}` : ''))
     .filter(Boolean);
   const factors = ks.map((k, i) => (k ? `${br(i, String(terms[i].a))}^{${k}}` : '')).filter(Boolean).join('\\cdot ');
-  return `taking ${joinAnd(steps)}, in any of ${orderings} ${plural(orderings, 'order')}: $${orderings} \\times ${factors} = ${shortInt(orderings * coef)}$`;
+  return `taking ${joinAnd(steps)}, in any of ${shortInt(orderings)} ${plural(orderings, 'order')}: $${shortIntTex(orderings)} \\times ${factors} = ${shortIntTex(orderings * coef)}$`;
 }
 
 function explainTuple(level: number, den: bigint, ctx: ExplainCtx): Explanation {
@@ -462,23 +506,30 @@ function explainTuple(level: number, den: bigint, ctx: ExplainCtx): Explanation 
   const work = workLatex(den, d);
   if (!t) return { title: 'Tuple', sections: [{ h: 'What it is', body: 'This size does not occur at this level.' }] };
   const multi = terms.length > 1;
+  const one = t.count === 1n;
+  const N = shortIntTex(t.count);
   const how =
     level === 0
       ? `The root is the only call on level 0.`
       : !multi
-        ? `Each level multiplies the number of calls by $a = ${terms[0].a}$, so level ${level} has $${terms[0].a}^{${level}} = ${shortInt(t.count)}$ calls.`
+        ? terms[0].a === 1
+          ? `Each call makes 1 call, so level ${level} has just 1 call.`
+          : `Each level multiplies the number of calls by $a = ${terms[0].a}$, so level ${level} has $${terms[0].a}^{${level}} = ${N}$ calls.`
         : (tupleCountWords(a.rec, level, den) ??
-          `Every path to size $${sizeLatex(den)}$ is ${t.parts.map((p) => compositionWords(a, p.ks, p.orderings, p.coefProduct)).join('; or ')}${t.parts.length > 1 ? `, for $${shortInt(t.count)}$ in all` : ''}.`);
+          `Every path to size $${sizeLatex(den)}$ is ${t.parts.map((p) => compositionWords(a, p.ks, p.orderings, p.coefProduct)).join('; or ')}${t.parts.length > 1 ? `, for $${N}$ in all` : ''}.`);
   const ct = concrete?.levels[level]?.tuples.find((x) => x.den === den);
-  const contrib = coefNLatex(tupleTotalCoef(t, d), d);
+  const contrib = coefNEq(tupleTotalCoef(t, d), d);
   return {
-    title: `Tuple $(${work}, ${shortInt(t.count)})$ on level ${level}`,
+    title: `Tuple $(${work}, ${N})$ on level ${level}`,
     sections: [
-      { h: 'What it is', body: `$${shortInt(t.count)}$ ${plural(t.count, 'call')} of size $${sizeLatex(den)}$ on level ${level}, each doing $${fAt(den, d)}$ work. The tuple lists (work per call, number of calls).` },
+      {
+        h: 'What it is',
+        body: `${one ? '1 call' : `$${N}$ calls`} of size $${sizeLatex(den)}$ on level ${level}, ${one ? 'doing' : 'each doing'} $${fAt(den, d)}$ work. A tuple lists (work per call, number of calls).`,
+      },
       { h: 'Why this value', body: how },
       {
         h: 'What it feeds',
-        body: `Together they do $${shortInt(t.count)} \\cdot ${work} = ${contrib}$${ct ? ` (${shortNum(ct.count * ct.work)} for $n = ${concrete!.n}$)` : ''}, part of level ${level}'s total of $${levelTotalTex(a.rec, level)}$.`,
+        body: `${one ? 'It does' : 'Together they do'} $${N} \\cdot ${work} ${contrib}$${ct ? ` (${shortNum(ct.count * ct.work)} for $n = ${shortIntTex(concrete!.n)}$)` : ''}, part of level ${level}'s total of $${levelTotalTex(a.rec, level)}$.`,
       },
     ],
     next: { label: `See level ${level}'s total`, entity: { kind: 'level', level } },
@@ -490,23 +541,34 @@ function explainLevel(level: number, ctx: ExplainCtx): Explanation {
   const total = levelTotalCoef(a.rec, level);
   const cl = concrete?.levels[level];
   const prevC = level > 0 ? concrete?.levels[level - 1] : undefined;
+  const nodes = nodesAtLevel(a.rec, level);
   const check =
     cl && concrete
       ? prevC
-        ? `With $n = ${concrete.n}$ this level does ${shortNum(cl.total)} work across ${shortInt(cl.nodes)} calls. The level above did ${shortNum(prevC.total)}, a ratio of ${shortNum(cl.total / prevC.total)}${Math.abs(cl.total / prevC.total - a.rNumber) > 0.01 ? `. That differs from $r$ near the bottom, because some paths have already reached size 1 and stopped, and a base case does 1 unit of work even when its (fractional) size is below 1` : ', matching $r$'}.`
-        : `With $n = ${concrete.n}$ this level does ${shortNum(cl.total)} work.`
+        ? `With $n = ${shortIntTex(concrete.n)}$ the ${calls(cl.nodes)} on this level ${does(cl.nodes)} ${shortNum(cl.total)} work in total. The level above did ${shortNum(prevC.total)}, a ratio of ${shortNum(cl.total / prevC.total)}${
+            Math.abs(cl.total / prevC.total - a.rNumber) > 0.01
+              ? `. That differs from $r$ near the bottom, because some paths have already reached size 1 and stopped, and a base case does 1 unit of work even when its (fractional) size is below 1`
+              : ', matching $r$'
+          }.`
+        : `With $n = ${shortIntTex(concrete.n)}$ this level does ${shortNum(cl.total)} work.`
       : null;
+  const vsRoot = cmp(a.r, ONE) === 0 ? `Its bar is as long as the root's, because $r = 1$.` : `Its bar is $${qPowTex(a.r, level)} ${eqTex(total)}$ times as long as the root's.`;
   return {
     title: `Level ${level}: total $${levelTotalTex(a.rec, level)}$`,
     sections: [
-      { h: 'What it is', body: `All the work done by the $${shortInt(nodesAtLevel(a.rec, level))}$ ${plural(nodesAtLevel(a.rec, level), 'call')} on level ${level}, not counting the calls they make.` },
+      {
+        h: 'What it is',
+        body: `All the work done by the $${shortIntTex(nodes)}$ ${plural(nodes, 'call')} on level ${level}, not counting the calls ${nodes === 1n ? 'it makes' : 'they make'}.`,
+      },
       {
         h: 'Why this value',
-        body: `Multiply each size's call count by the work per call, and add: $${levelSumTex(a.rec, level)}$.${level > 0 ? ` That is $${toLatex(a.r)}$ times level ${level - 1}'s $${levelTotalTex(a.rec, level - 1)}$.` : ''}`,
+        body: `Multiply each size's call count by the work per call, and add: $${levelSumTex(a.rec, level)}$.${
+          level > 0 ? ` That is ${timesWords(a.r, `level ${level - 1}'s $${levelTotalTex(a.rec, level - 1)}$`)}.` : ''
+        }`,
       },
       {
         h: 'What it feeds',
-        body: level === 0 ? `The root's bar is the reference length; every other bar is measured against it.` : `Its bar is $(${toLatex(a.r)})^{${level}} = ${toLatex(total)}$ times as long as the root's.`,
+        body: level === 0 ? `The root's bar is the reference length; every other bar is measured against it.` : vsRoot,
       },
       ...(check ? [{ h: 'Check it' as const, body: check }] : []),
     ],
@@ -527,8 +589,10 @@ function explainLeaves(ctx: ExplainCtx): Explanation {
         h: 'What it feeds',
         body:
           a.case === 'leaves'
-            ? `Since $r = ${toLatex(a.r)} > 1$, the bottom of the tree does the most work, so the leaf count is the answer: $${bigOTex(a)}$.`
-            : `Since $r = ${toLatex(a.r)} ${a.case === 'root' ? '<' : '='} 1$, the leaves do ${a.case === 'root' ? 'less work than the root' : 'the same work as every other level'}, so they don't decide the answer on their own.`,
+            ? `Since $${rEqTex(a)} > 1$, the bottom of the tree does the most work, so the leaf count is the answer: $${bigOTex(a)}$.`
+            : a.case === 'root'
+              ? `Since $${rEqTex(a)} < 1$, the leaves do less work than the root, so they don't decide the answer.`
+              : `Since $r = 1$, the leaves do the same work as every other level, so they don't decide the answer on their own.`,
       },
     ],
     next: NEXT_ANSWER,
@@ -556,16 +620,23 @@ function explainStep(id: StepId, ctx: ExplainCtx): Explanation {
 function explainAnswer(ctx: ExplainCtx): Explanation {
   const { a, concrete } = ctx;
   const s = derivation(a).find((x) => x.id === 'answer')!;
-  const dom = derivation(a).find((x) => x.id === 'dominates')!;
+  const r = rTex(a);
+  // one sentence on which levels matter, then the final step's reasoning
+  const lead =
+    a.case === 'root'
+      ? `Each level is $${r}$ of the one above, so the root's level is the biggest. `
+      : a.case === 'leaves'
+        ? `Each level is $${r}$ times the one above, so the bottom level is the biggest. `
+        : '';
   return {
     title: `$T(n) = ${bigOTex(a)}$`,
     sections: [
       { h: 'What it is', body: `The total work of the whole tree, up to a constant factor.` },
-      { h: 'Why this value', body: `${dom.note} ${s.note}` },
+      { h: 'Why this value', body: `${lead}${s.note}` },
       {
         h: 'Check it',
         body: concrete
-          ? `For $n = ${concrete.n}$ the tree's levels add up to ${shortNum(concrete.sum)}, while $${a.bigO.latex.replace(/\\log n/, '\\log_2 n')}$ = ${shortNum(concrete.bound)}. The ratio is ${shortNum(concrete.sum / concrete.bound)}. Move the n slider: the ratio should stay roughly constant.`
+          ? `For $n = ${shortIntTex(concrete.n)}$ the tree's levels add up to ${shortNum(concrete.sum)}, and $${boundName(a)} = ${shortNumTex(concrete.bound)}$: a ratio of ${shortNum(concrete.sum / concrete.bound)}. Move the $n$ slider and the ratio should stay roughly the same.`
           : (s.check ?? ''),
       },
     ],
@@ -578,15 +649,16 @@ function explainSum(ctx: ExplainCtx): Explanation {
   if (!concrete) return explainAnswer(ctx);
   const totals = concrete.levels.map((l) => l.total);
   return {
-    title: `Sum of all levels for $n = ${concrete.n}$`,
+    title: `Sum of all levels for $n = ${shortIntTex(concrete.n)}$`,
     sections: [
       { h: 'What it is', body: `The exact work of the whole tree at this $n$: every level's total, added up.` },
-      { h: 'Why this value', body: `${totals.slice(0, 6).map(shortNum).join(' + ')}${totals.length > 6 ? ' + …' : ''} = ${shortNum(concrete.sum)} over ${concrete.levels.length} levels.` },
+      { h: 'Why this value', body: `${totals.slice(0, 6).map(shortNum).join(' + ')}${totals.length > 6 ? ' + …' : ''} = ${shortNum(concrete.sum)}, over ${concrete.levels.length} levels.` },
       {
         h: 'What it feeds',
-        body: `Compare with $${a.bigO.latex.replace(/\\log n/, '\\log_2 n')}$ = ${shortNum(concrete.bound)}. If the Big-O is right, this ratio (${shortNum(concrete.sum / concrete.bound)}) stays bounded as $n$ grows.`,
+        body: `Compare with $${boundName(a)} = ${shortNumTex(concrete.bound)}$. If the Big-O is right, the ratio between them (${shortNum(concrete.sum / concrete.bound)}) stays bounded as $n$ grows.`,
       },
     ],
     next: NEXT_ANSWER,
   };
 }
+

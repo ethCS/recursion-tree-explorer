@@ -4,8 +4,8 @@
  * so explanations read as a worked example, never as a template.
  */
 import { analyze, levelTotalCoef, levelTuples, normalize, LIMITS, tupleTotalCoef, type Analysis, type Recurrence } from '../math/recurrence';
-import { div as qdiv, sub as qsub, ONE, toLatex, type Rational } from '../math/rational';
-import { coefNLatex, nPowLatex, shortInt, sizeLatex, workLatex } from '../math/format';
+import { div as qdiv, sub as qsub, ONE, type Rational } from '../math/rational';
+import { coefNEq, coefNLatex, isExact, nPowLatex, qTex, shortInt, shortIntTex, sizeLatex, workLatex } from '../math/format';
 import { br } from './tex';
 
 const ORD = ['', '', 'half', 'third', 'quarter', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth', 'thirteenth', 'fourteenth', 'fifteenth', 'sixteenth'];
@@ -16,7 +16,14 @@ export const pieceOfInput = (b: number) => (b === 2 ? 'half the input' : `a ${OR
 export const shrinkVerb = (b: number) => (b === 2 ? 'halves the size' : `cuts the size to a ${ORD[b]}`);
 
 export const plural = (k: number | bigint, one: string, many = one + 's') => (k === 1 || k === 1n ? one : many);
-export const calls = (k: number | bigint) => `${typeof k === 'bigint' ? shortInt(k) : k} ${plural(k, 'call')}`;
+export const calls = (k: number | bigint) => `${shortInt(k)} ${plural(k, 'call')}`;
+/** verb agreement: "1 call does", "2 calls do" */
+export const does = (k: number | bigint) => plural(k, 'does', 'do');
+
+/** a call's own work as a phrase: "1 unit of work", "$n^{2}$ work" */
+export const ownWork = (d: number) => (d === 0 ? '1 unit of work' : `$${nPowLatex(d)}$ work`);
+/** what the non-recursive work typically is, for a given d */
+export const workExample = (d: number) => (d === 0 ? 'a fixed amount, like one comparison' : 'such as splitting the input and combining the results');
 
 /** linear / quadratic / ... */
 export const workKind = (d: number) => ['constant', 'linear', 'quadratic', 'cubic', 'quartic'][d] ?? `degree-${d}`;
@@ -39,26 +46,41 @@ export const nd = (d: number) => (d === 0 ? '' : nPowLatex(d));
 
 /** Level total as LaTeX: "\tfrac{3}{2}n" */
 export const levelTotalTex = (rec: Recurrence, level: number) => coefNLatex(levelTotalCoef(rec, level), rec.d);
+/** "= \tfrac{3n}{2}", or "\approx 0.000905\,n^{4}" when the exact total is too long to read */
+export const levelTotalEq = (rec: Recurrence, level: number) => coefNEq(levelTotalCoef(rec, level), rec.d);
+
+/** "\frac{49}{16} \div \frac{7}{4} = \frac{7}{4}": level 2's total over level 1's, which is r */
+export function levelRatioTex(rec: Recurrence, r: Rational): string {
+  const [c1, c2] = [levelTotalCoef(rec, 1), levelTotalCoef(rec, 2)];
+  const rel = [c1, c2, r].every(isExact) ? '=' : '\\approx';
+  return `${qTex(c2)} \\div ${qTex(c1)} ${rel} ${qTex(r)}`;
+}
+
+/** More sizes than this on one level are summarised instead of listed. */
+const MAX_LISTED = 4;
 
 /**
  * A level's total, worked out from its tuples:
  * "4·n/16 + 4·n/8 + 1·n/4 = n/4 + n/2 + n/4 = n"
- * Level 1 parts are coloured by branch.
+ * Level 1 parts are coloured by branch. Long levels list the first few sizes and "⋯".
  */
 export function levelSumTex(rec: Recurrence, level: number): string {
   const d = rec.d;
   const tuples = levelTuples(rec, level);
   const colour = (i: number, tex: string) => (level === 1 ? br(i, tex) : tex);
-  const products = tuples.map((t, i) => colour(i, `${shortInt(t.count)}\\cdot ${workLatex(t.den, d)}`));
-  const parts = tuples.map((t, i) => colour(i, coefNLatex(tupleTotalCoef(t, d), d)));
-  const total = levelTotalTex(rec, level);
-  const steps = [products.join(' + ')];
-  if (tuples.length > 1 || parts[0] !== products[0]) {
-    const mid = parts.join(' + ');
-    if (mid !== steps[0] && mid !== total) steps.push(mid);
+  const total = coefNLatex(levelTotalCoef(rec, level), d);
+  const eq = levelTotalEq(rec, level);
+  if (tuples.length > MAX_LISTED) {
+    const first = tuples.slice(0, 2).map((t) => `${shortIntTex(t.count)}\\cdot ${workLatex(t.den, d)}`);
+    return `${first.join(' + ')} + \\cdots ${eq}`;
   }
-  if (steps[steps.length - 1] !== total) steps.push(total);
-  return steps.join(' = ');
+  const products = tuples.map((t) => `${shortIntTex(t.count)}\\cdot ${workLatex(t.den, d)}`);
+  const parts = tuples.map((t) => coefNLatex(tupleTotalCoef(t, d), d));
+  // compare uncoloured, so "1·1 = 1 = 1" never happens
+  const steps: string[][] = [products];
+  if (parts.join('+') !== products.join('+') && (tuples.length > 1 || parts[0] !== total)) steps.push(parts);
+  const out = steps.map((xs) => xs.map((x, i) => colour(i, x)).join(' + ')).join(' = ');
+  return steps[steps.length - 1].join(' + ') === total ? out : `${out} ${eq}`;
 }
 
 /** An example n that is a power of the smallest b, so the deepest path ends exactly: 4096 = 2^12 */
@@ -106,9 +128,9 @@ export function tupleCountWords(rec: Recurrence, level: number, den: bigint): st
   const paths = pathsTo(rec, level).get(den);
   if (!paths) return null;
   const total = paths.reduce((s, p) => s + p.count, 0n);
-  const one = (p: { seq: number[]; count: bigint }) => `$${seqTex(rec, p.seq)}$ gives $${seqCountTex(rec, p.seq)} = ${p.count}$`;
+  const one = (p: { seq: number[]; count: bigint }) => `$${seqTex(rec, p.seq)}$ gives $${seqCountTex(rec, p.seq)} = ${shortIntTex(p.count)}$`;
   if (paths.length === 1) return `There is one way to get there, ${one(paths[0]).replace(' gives ', ', which gives ')} ${plural(total, 'call')}.`;
-  return `There are ${paths.length} ways to get there: ${paths.map(one).join('; ')}. Together that is $${paths.map((p) => String(p.count)).join(' + ')} = ${total}$ calls.`;
+  return `There are ${paths.length} ways to get there: ${paths.map(one).join('; ')}. Together that is $${paths.map((p) => shortIntTex(p.count)).join(' + ')} = ${shortIntTex(total)}$ calls.`;
 }
 
 /** Analysis of the recurrence after a change, or null if the change is out of range. */
@@ -128,7 +150,7 @@ export const caseShort = (a: Analysis) => (a.case === 'root' ? 'the root dominat
 export function whatIfSentence(label: string, w: Analysis | null): string {
   if (!w) return '';
   const rel = w.case === 'root' ? '< 1' : w.case === 'equal' ? '= 1' : '> 1';
-  return `${label}, $r$ would be $${toLatex(w.r)}$ ($${rel}$), so ${caseShort(w)}: $O(${w.bigO.latex})$.`;
+  return `${label}, $r$ would be $${qTex(w.r)}$ ($${rel}$), so ${caseShort(w)}: $O(${w.bigO.latex})$.`;
 }
 
 /** 1/(1 - r) for r < 1: the shrinking series' bound as a multiple of its first term */

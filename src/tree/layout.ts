@@ -10,10 +10,10 @@
  */
 import { levelTuples, type ConcreteLevel, type Recurrence } from '../math/recurrence';
 
-export const NODE_W = 82;
+export const NODE_W = 80;
 export const NODE_H = 46;
 const GAP = 8;
-export const LEVEL_GAP = 104;
+export const LEVEL_GAP = 88;
 const CHIP_W = 118;
 const CHIP_GAP = 10;
 const MAX_CHIPS = 6;
@@ -92,6 +92,8 @@ export interface TreeOptions {
 /** Biggest default depth that keeps the tree readable. */
 export function defaultRealDepth(rec: Recurrence, maxLevel: number): number {
   const s = rec.terms.reduce((acc, t) => acc + t.a, 0);
+  // too many children to read even one level of them: start grouped
+  if (s > 12) return 0;
   let D = 1;
   let total = 1 + s;
   while (D < maxLevel) {

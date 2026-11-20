@@ -14,9 +14,12 @@ import { derivation } from './derivation';
 import { explain, partTip, type ExplainCtx } from './explain';
 
 const BAD = [/undefined/, /NaN/, /\[object/, /Infinity/, /a_i/, /b_i/, /k_i/, /\\sum_i/, /\\prod/, /k_1/];
+// wording and number-style slips that once shipped
+const SLIPS = [/\b1 calls\b/, /\b1 nodes\b/, /\b1 children\b/, /\b1 call on \$[^$]*\$ do\b/, /r = 1 = 1/, /\$\$/, /\d\.?\d*e[+-]?\d/, /frac\{[^}]*\}\{\d{6,}\}/, /\\dots\$\./];
 
 function checkRich(text: string, where: string) {
   for (const re of BAD) expect(text, `${where}: ${re}`).not.toMatch(re);
+  for (const re of SLIPS) expect(text, `${where}: ${re}`).not.toMatch(re);
   const parts = text.split(/(\$[^$]+\$)/g).filter((p) => p.startsWith('$') && p.endsWith('$') && p.length > 1);
   for (const p of parts) {
     expect(() => katex.renderToString(p.slice(1, -1), { throwOnError: true, trust: true, strict: false }), `${where}: ${p}`).not.toThrow();
@@ -136,14 +139,14 @@ describe('explanations plug in the actual numbers', () => {
   });
 
   it('gives a concrete depth example', () => {
-    expect(steps.depth.check).toMatch(/n = 4,096/);
+    expect(steps.depth.check).toMatch(/n = 4{,}096/);
     expect(steps.depth.check).toMatch(/12 levels below the root/);
     expect(steps.depth.check).toMatch(/shortest is 6/);
   });
 
   it('Karatsuba counts its leaves for a real n', () => {
     const k = derivation(analyze({ terms: [{ a: 3, b: 2 }], d: 1 })).find((s) => s.id === 'leaves')!;
-    expect(k.check).toContain('3^{12} = 531,441');
+    expect(k.check).toContain('3^{12} = 531{,}441');
   });
 
   it('what-if: the coefficient explanation says what a change would do', () => {

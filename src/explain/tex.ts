@@ -1,5 +1,6 @@
 /** Small LaTeX builders shared by the derivation and explanation text. */
-import { toLatex, type Rational } from '../math/rational';
+import { cmp, ONE, type Rational } from '../math/rational';
+import { approxTex, eqTex, isShort, qTex } from '../math/format';
 import { exactLog, type Analysis, type Term } from '../math/recurrence';
 
 /** Colour a LaTeX fragment with a branch colour (CSS class b0/b1/b2). */
@@ -20,9 +21,42 @@ export function rTermTex(t: Term, d: number, i: number): string {
 /** "2/4 + 1/2" */
 export const rSumTex = (a: Analysis) => a.rec.terms.map((t, i) => rTermTex(t, a.rec.d, i)).join(' + ');
 
-/** r's value, plus a decimal when it is a fraction */
+/**
+ * r's value, plus a decimal when it is a fraction: "\frac{7}{4} \approx 1.75".
+ * A fraction too long to read (4290553/4741632000) becomes just "\approx 0.000905".
+ */
 export function rValueTex(r: Rational): string {
-  return r.den === 1n ? toLatex(r) : `${toLatex(r)} \\approx ${(Number(r.num) / Number(r.den)).toFixed(3).replace(/0+$/, '').replace(/\.$/, '')}`;
+  if (r.den === 1n) return qTex(r);
+  const dec = approxTex(Number(r.num) / Number(r.den));
+  return isShort(r) ? `${qTex(r)} \\approx ${dec}` : `\\approx ${dec}`;
+}
+/** rValueTex with its relation: "= \frac{7}{4} \approx 1.75" or "\approx 0.000905" */
+export const rValueEq = (r: Rational) => (r.den === 1n || isShort(r) ? `= ${rValueTex(r)}` : rValueTex(r));
+
+/**
+ * "r = \frac{2}{4} + \frac{1}{2} = 1": the sum of the shares and its value,
+ * without repeating a single share that already is the value (r = 16, not r = 16 = 16).
+ */
+export function rFullTex(a: Analysis): string {
+  const t = a.rec.terms[0];
+  const gcd = (x: number, y: number): number => (y ? gcd(y, x % y) : x);
+  const sumIsValue = a.rec.terms.length === 1 && (a.rec.d === 0 || (a.rec.d === 1 && gcd(t.a, t.b) === 1));
+  if (!sumIsValue) return `r = ${rSumTex(a)} ${rValueEq(a.r)}`;
+  return a.r.den === 1n ? `r = ${rSumTex(a)}` : `r = ${rSumTex(a)} \\approx ${approxTex(Number(a.r.num) / Number(a.r.den))}`;
+}
+
+/** r as LaTeX: exact when short, otherwise its decimal */
+export const rTex = (a: Analysis) => qTex(a.r);
+/** "r = \frac{7}{4}" or "r \approx 0.000905" */
+export const rEqTex = (a: Analysis) => `r ${eqTex(a.r)}`;
+
+/**
+ * x compared with a reference, in words: "the same as the root's work",
+ * "$\frac{1}{2}$ of the root's work", "$\frac{7}{4}$ times the root's work"
+ */
+export function timesWords(x: Rational, what: string): string {
+  const c = cmp(x, ONE);
+  return c === 0 ? `the same as ${what}` : c < 0 ? `$${qTex(x)}$ of ${what}` : `$${qTex(x)}$ times ${what}`;
 }
 
 export const caseWord = (a: Analysis) => (a.case === 'root' ? 'shrink' : a.case === 'equal' ? 'stay the same' : 'grow');

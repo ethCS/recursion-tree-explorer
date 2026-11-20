@@ -5,7 +5,7 @@ import { useSelection } from '../state/selection';
 import { Rich } from './Tex';
 
 export function ExplainPanel({ ctx, locked }: { ctx: ExplainCtx; locked: boolean }) {
-  const { selected, select, side } = useSelection();
+  const { selected, select, side, anchor } = useSelection();
   const ref = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -20,7 +20,7 @@ export function ExplainPanel({ ctx, locked }: { ctx: ExplainCtx; locked: boolean
   const spoiler = locked && isSpoiler(selected);
   const ex = spoiler ? null : explain(selected, ctx);
   return (
-    <aside className={`explain side-${side}`} ref={ref} aria-label="Explanation" aria-live="polite">
+    <aside className={`explain side-${side} ${dock(anchor).cls}`} style={dock(anchor).style} ref={ref} aria-label="Explanation" aria-live="polite">
       <header className="explain-head">
         <span className="explain-kicker">Explain</span>
         <button className="icon-btn" onClick={() => select(null)} aria-label="Close explanation" title="Close (Esc)">
@@ -55,6 +55,23 @@ export function ExplainPanel({ ctx, locked }: { ctx: ExplainCtx; locked: boolean
       )}
     </aside>
   );
+}
+
+/**
+ * Dock the card at the bottom unless what was clicked sits in the lower part of
+ * the screen; then dock at the top. Either way the card stops short of the
+ * clicked element, so it never covers the thing it explains (on wide screens;
+ * phones use a bottom sheet).
+ */
+function dock(anchor: { top: number; bottom: number } | null): { cls: string; style?: React.CSSProperties } {
+  if (!anchor || window.innerWidth <= 640) return { cls: 'dock-bottom' };
+  const vh = window.innerHeight;
+  const gap = 16;
+  const minH = 240;
+  const below = vh - anchor.bottom - gap * 2;
+  const above = anchor.top - gap * 2 - 64;
+  if (below >= minH || below >= above) return { cls: 'dock-bottom', style: { maxHeight: Math.max(minH, Math.min(below, 600)) } };
+  return { cls: 'dock-top', style: { maxHeight: Math.max(minH, Math.min(above, 600)) } };
 }
 
 function isSpoiler(e: Entity) {

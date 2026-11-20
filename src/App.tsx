@@ -18,7 +18,9 @@ const SYMBOLIC_LEVELS = 5;
 // The project's page on the portfolio site, which links here. Override with
 // VITE_PORTFOLIO_URL when hosting the explorer somewhere else.
 const PORTFOLIO_URL = import.meta.env.VITE_PORTFOLIO_URL || 'https://eethan.com/projects/dsa';
-const DEFAULT: Recurrence = PRESETS[3].rec;
+// Karatsuba: r = 3/2, so the bars visibly grow by the same factor at every
+// level. An r = 1 default made every bar equal, which hides the multiplication.
+const DEFAULT: Recurrence = PRESETS.find((p) => p.id === 'karatsuba')!.rec;
 
 export default function App() {
   const [rec, setRec] = useState<Recurrence>(() => decodeHash(window.location.hash) ?? DEFAULT);
@@ -164,14 +166,14 @@ export default function App() {
             <section className="panel tree-panel" aria-labelledby="tree-h">
               <div className="panel-head">
                 <h2 id="tree-h">Recursion tree</h2>
-                <p className="muted small">Each node: subproblem size and its own work. Drag to pan, scroll to zoom, ± to expand.</p>
+                <p className="muted small">Each node shows its size and its own work. Drag to pan, scroll to zoom.</p>
               </div>
               <TreeView analysis={analysis} maxLevel={treeMaxLevel} concrete={concrete} buildKey={buildKey} reducedMotion={reducedMotion} />
             </section>
             <section className="panel levels-panel" aria-labelledby="levels-h">
               <div className="panel-head">
                 <h2 id="levels-h">Work per level</h2>
-                <p className="muted small">Bars are level totals. Their shape is the whole answer.</p>
+                <p className="muted small">Each level’s total is the one above times <i>r</i>.</p>
               </div>
               <LevelPanel analysis={analysis} levels={SYMBOLIC_LEVELS} concrete={concrete} hidden={locked} hintLevels={predict?.phase === 'ask' ? predict.hint : 99} />
               {concrete && !locked && <ConcreteSummary a={analysis} n={concrete.n} sum={concrete.sum} levels={concrete.levels.length} />}
@@ -181,7 +183,7 @@ export default function App() {
           <section className="panel derivation-panel" aria-labelledby="deriv-h">
             <div className="panel-head">
               <h2 id="deriv-h">Worked solution</h2>
-              <p className="muted small">Every step uses this recurrence's own numbers. Click a step to see why it works.</p>
+              <p className="muted small">Every step uses this recurrence’s numbers. Click one to see why it works.</p>
             </div>
             <Derivation a={analysis} hidden={locked} />
           </section>
